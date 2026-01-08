@@ -101,7 +101,7 @@ namespace YTDownloadTool.Pages {
                 return;
             }
             _contentLoaded = true;
-            System.Uri resourceLocater = new System.Uri("/YTDownloadTool;component/pages/registerpage.xaml", System.UriKind.Relative);
+            System.Uri resourceLocater = new System.Uri("/YTDownloadTool;V1.0.0.0;component/pages/registerpage.xaml", System.UriKind.Relative);
             
             #line 1 "..\..\..\..\Pages\RegisterPage.xaml"
             System.Windows.Application.LoadComponent(this, resourceLocater);
