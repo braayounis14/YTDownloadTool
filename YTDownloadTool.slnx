@@ -1,3 +1,5 @@
 <Solution>
+  <Project Path="YTDownloadTool.Core/YTDownloadTool.Core.csproj" />
   <Project Path="YTDownloadTool/YTDownloadTool.csproj" />
+  <Project Path="YTDownloadTool.Tests/YTDownloadTool.Tests.csproj" />
 </Solution>
