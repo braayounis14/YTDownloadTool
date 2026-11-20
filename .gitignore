@@ -1,0 +1,42 @@
+## .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.cache
+*_wpftmp*
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+## Publishing & Packaging
+publish/
+Releases/
+artifacts/
+*.nupkg
+*.snupkg
+*.msi
+*.msix
+
+## Downloaded / Staged External Multimedia Tools (fetched at build/release time)
+BaselineTools/
+Binaries/
+tools-cache/
+
+## Logs & Local Temp
+*.log
+logs/
+*.tmp
+*.part
+*.ytdl
+
+## OS / IDE
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
