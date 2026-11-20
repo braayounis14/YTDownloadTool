@@ -401,12 +401,17 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             OnStandardError = line => HandleLiveLine(line)
         }, jobLinkedCts.Token);
 
-        // Locate finalized file, or if separate unmerged .f*.part video+audio tracks remain after graceful stop,
-        // mux them cleanly with FFmpeg (-c copy -shortest) so no recording is ever lost.
-        var capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation);
+        // Locate finalized merged file; if separate unmerged .f* video+audio tracks remain after graceful stop,
+        // mux them cleanly with FFmpeg (-c copy -shortest) BEFORE falling back to single-track .part recovery.
+        var capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, allowPartFallback: false);
         if (string.IsNullOrWhiteSpace(capturedFile))
         {
             capturedFile = await TryManualMuxPartialTracksAsync(toolchain, reservation);
+        }
+
+        if (string.IsNullOrWhiteSpace(capturedFile))
+        {
+            capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, allowPartFallback: true);
         }
 
         var hasSavedRecording = !string.IsNullOrWhiteSpace(capturedFile)
@@ -654,7 +659,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         return target >= TimeSpan.FromSeconds(15) ? target : null;
     }
 
-    private static string? ResolveFinalOutputFile(string? printedFinal, string? lastDestination, OutputPathReservation reservation)
+    private static string? ResolveFinalOutputFile(string? printedFinal, string? lastDestination, OutputPathReservation reservation, bool allowPartFallback = true)
     {
         if (!string.IsNullOrWhiteSpace(printedFinal) && File.Exists(printedFinal))
             return printedFinal;
@@ -665,22 +670,27 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         if (File.Exists(reservation.TargetFilePath))
             return reservation.TargetFilePath;
 
-        // Check common finalized/crash-safe extensions matching our reserved base path
+        // Check common finalized/crash-safe extensions matching our reserved base path (excluding .f<id> split tracks)
         var dir = Path.GetDirectoryName(reservation.ReservedBasePath);
         var baseName = Path.GetFileName(reservation.ReservedBasePath);
         if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
         {
             var candidates = Directory.EnumerateFiles(dir, $"{baseName}.*")
                 .Where(f => !f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
-                            && !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase))
+                            && !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
+                            && !IsSplitFormatTrackFile(Path.GetFileName(f), baseName))
                 .OrderByDescending(f => new FileInfo(f).Length)
                 .ToList();
 
             if (candidates.Count > 0)
                 return candidates[0];
 
-            // For gracefully interrupted live MPEG-TS captures, check .part as last resort if valid
+            if (!allowPartFallback)
+                return null;
+
+            // For gracefully interrupted single-stream live MPEG-TS captures, promote .part if valid
             var partFile = Directory.EnumerateFiles(dir, $"{baseName}.*.part")
+                .Where(f => !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(f => new FileInfo(f).Length)
                 .FirstOrDefault();
 
@@ -700,6 +710,15 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         }
 
         return null;
+    }
+
+    private static bool IsSplitFormatTrackFile(string fileName, string baseName)
+    {
+        if (!fileName.StartsWith(baseName + ".f", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var afterF = baseName.Length + 2;
+        return afterF < fileName.Length && char.IsDigit(fileName[afterF]);
     }
 
     private static void CleanupPartialFiles(string reservedBasePath)

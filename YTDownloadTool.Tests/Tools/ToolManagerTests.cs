@@ -264,6 +264,30 @@ public sealed class ToolManagerTests : IDisposable
         Assert.Equal("2026.10.01", healed.YtDlpVersion);
     }
 
+    [Theory]
+    [InlineData("https://github.com/yt-dlp/yt-dlp/releases/latest", true)]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/foo", true)]
+    [InlineData("https://release-assets.githubusercontent.com/bar", true)]
+    [InlineData("http://github.com/yt-dlp/yt-dlp/releases/latest", false)]
+    [InlineData("https://evil.example.com/yt-dlp.exe", false)]
+    [InlineData("file:///C:/Windows/cmd.exe", false)]
+    public void ToolSources_EnforcesStrictHttpsGitHubAllowlist(string url, bool expectedTrusted)
+    {
+        Assert.Equal(expectedTrusted, ToolSources.IsTrustedDownloadUri(new Uri(url)));
+    }
+
+    [Theory]
+    [InlineData("2.9.8", true)]
+    [InlineData("2.3.0", true)]
+    [InlineData("v2.6.9", true)]
+    [InlineData("2.2.9", false)]
+    [InlineData("1.46.0", false)]
+    [InlineData("", false)]
+    public void ToolVersionParser_EnforcesMinimumDenoVersion(string version, bool expectedSupported)
+    {
+        Assert.Equal(expectedSupported, ToolVersionParser.IsDenoVersionSupported(version));
+    }
+
     private void SeedFakeBaseline(string folder, params (string Name, string Content)[] files)
     {
         var dir = Path.Combine(_paths.BaselineToolsDirectory, folder);

@@ -201,4 +201,65 @@ public sealed class SafeProcessRunnerTests
 
         Assert.True(exited, $"Child process {childPid} was not terminated when WindowsJobObject was disposed.");
     }
+
+    [Fact]
+    public async Task RunAsync_WinExeInternalSignaler_DeliversRealCtrlCEvent()
+    {
+        // Locate built YTDownloadTool.exe relative to test output to verify the exact production WinExe signaler path.
+        var candidateExe = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", "Debug", "net10.0-windows", "YTDownloadTool.exe"));
+        if (!File.Exists(candidateExe))
+        {
+            candidateExe = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", "Release", "net10.0-windows", "YTDownloadTool.exe"));
+        }
+
+        Assert.True(File.Exists(candidateExe), $"Expected built YTDownloadTool.exe at {candidateExe}");
+
+        using var runner = new SafeProcessRunner(NullLogger<SafeProcessRunner>.Instance, winExeSignalerPath: candidateExe);
+        using var cts = new CancellationTokenSource();
+
+        const string script = """
+            $code = @"
+            using System;
+            using System.Threading;
+            public static class CtrlCTrap2 {
+                public static int Wait() {
+                    var ev = new ManualResetEventSlim(false);
+                    Console.CancelKeyPress += (s, e) => { e.Cancel = true; Console.WriteLine("WINEXE_TRAPPED"); Console.Out.Flush(); ev.Set(); };
+                    Console.WriteLine("WINEXE_READY"); Console.Out.Flush();
+                    return ev.Wait(TimeSpan.FromSeconds(15)) ? 42 : 99;
+                }
+            }
+            "@
+            Add-Type -TypeDefinition $code
+            exit ([CtrlCTrap2]::Wait())
+            """;
+
+        var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trapped = false;
+
+        var runTask = runner.RunAsync(new ProcessRunRequest
+        {
+            ExecutablePath = "powershell.exe",
+            Arguments = ["-NoProfile", "-NonInteractive", "-Command", script],
+            GracefulStop = GracefulStopStrategy.CtrlC,
+            GracefulStopTimeout = TimeSpan.FromSeconds(8),
+            OnStandardOutput = line =>
+            {
+                if (line.Contains("WINEXE_READY")) readyTcs.TrySetResult();
+                if (line.Contains("WINEXE_TRAPPED")) trapped = true;
+            }
+        }, cts.Token);
+
+        await readyTcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        cts.Cancel();
+
+        var result = await runTask;
+        Assert.True(result.WasCancelled);
+        Assert.True(result.GracefulStopUsed);
+        Assert.False(result.ForceKilled);
+        Assert.True(trapped);
+        Assert.Equal(42, result.ExitCode);
+    }
 }
