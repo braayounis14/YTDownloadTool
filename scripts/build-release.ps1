@@ -29,8 +29,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "dotnet tool restore failed." }
 
     if (-not $SkipTests) {
-        Write-Host "`n=== 2. Build & Run Automated Test Suite ===" -ForegroundColor Cyan
-        dotnet test $slnPath -c Release --nologo --verbosity minimal
+        Write-Host "`n=== 2. Build Solution & Run Automated Test Suite ===" -ForegroundColor Cyan
+        dotnet build $slnPath -c Release --nologo
+        if ($LASTEXITCODE -ne 0) { throw "Solution build failed; aborting release build." }
+
+        dotnet test $slnPath -c Release --no-build --nologo --verbosity minimal
         if ($LASTEXITCODE -ne 0) { throw "Automated tests failed; aborting release build." }
     }
 
@@ -81,7 +84,10 @@ try {
     New-Item -ItemType Directory -Force -Path $releasesDir | Out-Null
 
     if (-not [string]::IsNullOrWhiteSpace($PreviousReleasesDir) -and (Test-Path $PreviousReleasesDir)) {
-        Copy-Item (Join-Path $PreviousReleasesDir "*") $releasesDir -Force
+        $prevFiles = @(Get-ChildItem -Path $PreviousReleasesDir -File -ErrorAction SilentlyContinue)
+        if ($prevFiles.Count -gt 0) {
+            Copy-Item -Path $prevFiles.FullName -Destination $releasesDir -Force
+        }
     }
 
     dotnet vpk pack `
