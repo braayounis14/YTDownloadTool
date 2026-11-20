@@ -1,4 +1,3 @@
-using System.Globalization;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Tools;
 
@@ -62,7 +61,6 @@ public static class YtDlpArgumentBuilder
         args.Add("--socket-timeout");
         args.Add("20");
 
-        // Structured progress & deterministic final filename output
         AddProgressAndPrintArguments(args);
 
         args.Add("--");
@@ -74,26 +72,13 @@ public static class YtDlpArgumentBuilder
         ResolvedToolchain toolchain,
         DownloadJobRequest request,
         string reservedBaseOutputPath,
-        LivestreamRecordingMode mode,
-        TimeSpan? modeCTargetDuration = null,
-        bool preferMuxedHlsForModeC = false)
+        LivestreamRecordingMode mode)
     {
         var args = new List<string>();
         AddCommonEngineArguments(args, toolchain);
 
-        // Always record live streams into crash-safe MKV/MPEG-TS during capture;
-        // if the user asked for MP4, we remux cleanly after finalization.
-        var formatSelector = request.SelectedQuality.FormatSelector;
-        if (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge && preferMuxedHlsForModeC)
-        {
-            var h = request.SelectedQuality.Height;
-            formatSelector = h is > 0
-                ? $"b[protocol*=m3u8][height<={h}]/bv*[height<={h}]+ba/b[height<={h}]/b"
-                : "b[protocol*=m3u8]/bv*+ba/b";
-        }
-
         args.Add("-f");
-        args.Add(formatSelector);
+        args.Add(request.SelectedQuality.FormatSelector);
 
         switch (mode)
         {
@@ -102,30 +87,19 @@ public static class YtDlpArgumentBuilder
                 break;
 
             case LivestreamRecordingMode.RecordFromStartUntilEnd:
+            case LivestreamRecordingMode.RecordFromStartToLiveEdge:
+                // Empirically verified on YouTube 2026: --live-from-start serves separate concurrent DASH
+                // streams (http_dash_segments_generator) where yt-dlp ignores --downloader ffmpeg -t and
+                // rejects --download-sections. Mode C is cleanly stopped near the live edge by
+                // ModeCLiveEdgeWatchdog sending CTRL_C_EVENT once both tracks pass the target segment,
+                // triggering yt-dlp's built-in FFmpeg merge and clean exit (code 0).
                 args.Add("--live-from-start");
                 args.Add("--concurrent-fragments");
                 args.Add("4");
                 break;
-
-            case LivestreamRecordingMode.RecordFromStartToLiveEdge:
-                args.Add("--live-from-start");
-                if (modeCTargetDuration is { TotalSeconds: >= 5 } target)
-                {
-                    var secondsStr = Math.Floor(target.TotalSeconds).ToString("F0", CultureInfo.InvariantCulture);
-                    args.Add("--downloader");
-                    args.Add("ffmpeg");
-                    args.Add("--downloader-args");
-                    args.Add($"ffmpeg_o:-t {secondsStr}");
-                }
-                else
-                {
-                    args.Add("--concurrent-fragments");
-                    args.Add("4");
-                }
-                break;
         }
 
-        // Crash-safe live container settings
+        // Crash-safe live capture containers (remuxed to MP4 with +faststart after finalization if requested)
         args.Add("--hls-use-mpegts");
         args.Add("--merge-output-format");
         args.Add("mkv");
@@ -168,6 +142,21 @@ public static class YtDlpArgumentBuilder
         ];
     }
 
+    public static IReadOnlyList<string> BuildManualMuxFallbackArguments(string videoInputPath, string audioInputPath, string outputMkvPath)
+    {
+        return
+        [
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-i", videoInputPath,
+            "-i", audioInputPath,
+            "-c", "copy",
+            "-shortest",
+            outputMkvPath
+        ];
+    }
+
     private static string BuildContainerAwareFormatSelector(QualityOption quality, string container)
     {
         if (quality.Id == "best")
@@ -183,8 +172,6 @@ public static class YtDlpArgumentBuilder
         if (container == "mp4" && quality.Height is > 0)
         {
             var h = quality.Height.Value;
-            // Prefer MP4/AAC-compatible streams at the requested height first so remuxing needs zero transcoding,
-            // while still falling back gracefully if only VP9/AV1/Opus exist at 1440p/2160p.
             return $"bv*[ext=mp4][height<={h}]+ba[ext=m4a]/{quality.FormatSelector}";
         }
 

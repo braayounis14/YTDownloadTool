@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using YTDownloadTool.Core.Livestream;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Tools;
@@ -345,7 +346,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         if (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge)
         {
             modeCTargetDuration = CalculateModeCTargetDuration(req.LivestreamStartUtc, req.LiveEdgeMarginSeconds);
-            if (modeCTargetDuration is null)
+            if (req.LivestreamStartUtc.HasValue && modeCTargetDuration is null)
             {
                 throw new InvalidOperationException(
                     $"This livestream has only been live for less than the configured {req.LiveEdgeMarginSeconds}s live-edge margin. Wait a moment or use Mode A ('Record from now').");
@@ -356,23 +357,31 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             toolchain,
             req,
             reservation.ReservedBasePath,
-            mode,
-            modeCTargetDuration,
-            preferMuxedHlsForModeC: req.HasMuxedHlsFromStart);
+            mode);
+
+        var isCappedEstimate = req.LivestreamStartUtc.HasValue
+                               && (DateTimeOffset.UtcNow - req.LivestreamStartUtc.Value).TotalHours > 120;
+        var expectedTracks = req.SelectedQuality.RequiresFFmpeg ? 2 : 1;
+        var watchdog = mode == LivestreamRecordingMode.RecordFromStartToLiveEdge
+            ? new ModeCLiveEdgeWatchdog(req.LivestreamStartUtc, req.LiveEdgeMarginSeconds, isCappedEstimate, expectedTracks)
+            : null;
 
         using var jobLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var modeCWatchdogTriggered = false;
+        var modeCStopTriggered = false;
         string? detectedFinalFile = null;
         string? lastDestination = null;
         string? latestNotice = null;
         TimeSpan? lastRecordedDuration = null;
         long? lastDownloadedBytes = null;
+        var bytesByTrack = new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
         var initialPhase = mode switch
         {
             LivestreamRecordingMode.RecordFromNow => "Recording live stream...",
             LivestreamRecordingMode.RecordFromStartUntilEnd => "Catching up from stream start...",
-            LivestreamRecordingMode.RecordFromStartToLiveEdge => $"Downloading start → {FormatDuration(modeCTargetDuration!.Value)} (stopping {req.LiveEdgeMarginSeconds}s before live)...",
+            LivestreamRecordingMode.RecordFromStartToLiveEdge => modeCTargetDuration.HasValue
+                ? $"Capturing start → ~{FormatDuration(modeCTargetDuration.Value)} (stopping {req.LiveEdgeMarginSeconds}s before live)..."
+                : $"Capturing historical stream (stopping {req.LiveEdgeMarginSeconds}s before live)...",
             _ => "Recording live stream..."
         };
 
@@ -387,43 +396,19 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             ExecutablePath = toolchain.YtDlpPath,
             Arguments = args,
             GracefulStop = GracefulStopStrategy.CtrlC,
-            GracefulStopTimeout = TimeSpan.FromSeconds(12),
+            GracefulStopTimeout = TimeSpan.FromSeconds(15),
             OnStandardOutput = line => HandleLiveLine(line),
             OnStandardError = line => HandleLiveLine(line)
         }, jobLinkedCts.Token);
 
-        // Locate whatever crash-safe recording file exists on disk (even after user Stop & Save or Mode C watchdog)
+        // Locate finalized file, or if separate unmerged .f*.part video+audio tracks remain after graceful stop,
+        // mux them cleanly with FFmpeg (-c copy -shortest) so no recording is ever lost.
         var capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation);
-
-        // Mode C fallback: if FFmpeg -t failed due to live DASH incompatibility, retry cleanly with native fragment watchdog
-        if (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge
-            && !runtime.UserCancelled
-            && !modeCWatchdogTriggered
-            && result.ExitCode != 0
-            && (capturedFile is null || !File.Exists(capturedFile))
-            && result.StandardError.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(capturedFile))
         {
-            _logger.LogWarning("Mode C bounded FFmpeg capture failed; retrying with native --live-from-start + live-edge watchdog.");
-            latestNotice = "Switched to native fragment live-edge capture for this stream.";
-
-            var fallbackArgs = YtDlpArgumentBuilder.BuildLivestreamArguments(
-                toolchain, req, reservation.ReservedBasePath, mode, modeCTargetDuration: null, preferMuxedHlsForModeC: false);
-
-            using var fallbackCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            result = await _processRunner.RunAsync(new ProcessRunRequest
-            {
-                ExecutablePath = toolchain.YtDlpPath,
-                Arguments = fallbackArgs,
-                GracefulStop = GracefulStopStrategy.CtrlC,
-                GracefulStopTimeout = TimeSpan.FromSeconds(12),
-                OnStandardOutput = line => HandleLiveLine(line, fallbackCts),
-                OnStandardError = line => HandleLiveLine(line, fallbackCts)
-            }, fallbackCts.Token);
-
-            capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation);
+            capturedFile = await TryManualMuxPartialTracksAsync(toolchain, reservation);
         }
 
-        // If user clicked Stop & Save (or Mode C watchdog stopped cleanly) and we have a playable file, finalize it!
         var hasSavedRecording = !string.IsNullOrWhiteSpace(capturedFile)
                                 && File.Exists(capturedFile)
                                 && new FileInfo(capturedFile).Length > 0;
@@ -468,7 +453,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             }
             else
             {
-                latestNotice = "Recording saved safely in MKV/TS format (MP4 remux was skipped to preserve stream codecs).";
+                latestNotice = "Recording saved safely in MKV/TS format (MP4 remux skipped to preserve stream codecs).";
             }
         }
 
@@ -477,16 +462,17 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
 
         var completionLabel = runtime.UserCancelled
             ? "Recording stopped & saved"
-            : (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge ? "Historical stream captured" : "Recording completed");
+            : (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge || modeCStopTriggered
+                ? "Historical stream captured"
+                : "Recording completed");
 
         Report(runtime, new DownloadProgressSnapshot(
             req.JobId, DownloadJobState.Completed, 100, false, finalSize, finalSize, null, TimeSpan.Zero,
             lastRecordedDuration, completionLabel, OutputFilePath: finalOutputPath, NonFatalNotice: latestNotice));
 
-        void HandleLiveLine(string line, CancellationTokenSource? overrideStopCts = null)
+        void HandleLiveLine(string line)
         {
             var parsed = YtDlpProgressParser.ParseLine(line);
-            var activeStopCts = overrideStopCts ?? jobLinkedCts;
 
             switch (parsed.Kind)
             {
@@ -502,83 +488,151 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
                     latestNotice = parsed.Notice;
                     break;
 
+                case ParsedOutputKind.LiveHeadWait:
+                    if (watchdog is not null && !modeCStopTriggered)
+                    {
+                        var waitDecision = watchdog.ObserveLiveHeadWaitSignal();
+                        if (waitDecision.ShouldStopNow)
+                        {
+                            modeCStopTriggered = true;
+                            latestNotice = waitDecision.Reason;
+                            Report(runtime, new DownloadProgressSnapshot(
+                                req.JobId, DownloadJobState.Finalizing, 96, true, lastDownloadedBytes, null, null, null,
+                                lastRecordedDuration, "Reached live edge — finalizing recording...", NonFatalNotice: latestNotice));
+                            try { jobLinkedCts.Cancel(); } catch { }
+                        }
+                    }
+                    break;
+
                 case ParsedOutputKind.FFmpegProgress:
                     lastRecordedDuration = parsed.MediaTime ?? lastRecordedDuration;
                     lastDownloadedBytes = parsed.DownloadedBytes ?? lastDownloadedBytes;
 
-                    var pct = mode == LivestreamRecordingMode.RecordFromStartToLiveEdge && modeCTargetDuration is { TotalSeconds: > 0 } && lastRecordedDuration.HasValue
-                        ? Math.Clamp(lastRecordedDuration.Value.TotalSeconds / modeCTargetDuration.Value.TotalSeconds * 96.0, 0, 96)
-                        : 0;
-
                     var state = mode == LivestreamRecordingMode.RecordFromNow ? DownloadJobState.RecordingLive : DownloadJobState.CatchingUp;
                     var phase = lastRecordedDuration.HasValue
-                        ? (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge && modeCTargetDuration.HasValue
-                            ? $"Capturing {FormatDuration(lastRecordedDuration.Value)} / {FormatDuration(modeCTargetDuration.Value)}"
-                            : $"Recording live ({FormatDuration(lastRecordedDuration.Value)})")
+                        ? $"Recording live ({FormatDuration(lastRecordedDuration.Value)})"
                         : "Recording live...";
 
                     Report(runtime, new DownloadProgressSnapshot(
-                        req.JobId, state, pct, mode != LivestreamRecordingMode.RecordFromStartToLiveEdge,
+                        req.JobId, state, 0, true,
                         lastDownloadedBytes, null, null, null, lastRecordedDuration, phase, NonFatalNotice: latestNotice));
-
-                    // Secondary safety watchdog for Mode C: if media time crosses target duration, request graceful stop
-                    if (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge
-                        && modeCTargetDuration.HasValue
-                        && lastRecordedDuration >= modeCTargetDuration.Value
-                        && !modeCWatchdogTriggered)
-                    {
-                        modeCWatchdogTriggered = true;
-                        try { activeStopCts.Cancel(); } catch { }
-                    }
                     break;
 
                 case ParsedOutputKind.DownloadProgress:
-                    lastDownloadedBytes = parsed.DownloadedBytes ?? lastDownloadedBytes;
-
-                    var isNearLiveEdge = false;
-                    double livePct = 0;
-                    if (parsed.FragmentIndex is > 0 && parsed.FragmentCount is > 0)
+                    var trackKey = parsed.FormatId ?? parsed.StreamChannel ?? "0";
+                    if (parsed.DownloadedBytes is > 0)
                     {
-                        livePct = Math.Clamp((double)parsed.FragmentIndex.Value / parsed.FragmentCount.Value * 100.0, 0, 100);
-                        // Assume conservative 2s-5s per YouTube fragment; trigger Mode C stop when within margin
-                        var remainingFragments = parsed.FragmentCount.Value - parsed.FragmentIndex.Value;
-                        var estimatedRemainingSec = remainingFragments * 2.0;
-                        isNearLiveEdge = estimatedRemainingSec <= req.LiveEdgeMarginSeconds;
-
-                        if (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge
-                            && isNearLiveEdge
-                            && parsed.FragmentCount.Value > 10
-                            && !modeCWatchdogTriggered)
-                        {
-                            modeCWatchdogTriggered = true;
-                            try { activeStopCts.Cancel(); } catch { }
-                        }
+                        bytesByTrack[trackKey] = parsed.DownloadedBytes.Value;
+                        lastDownloadedBytes = bytesByTrack.Values.Sum();
                     }
 
-                    var liveState = mode == LivestreamRecordingMode.RecordFromStartUntilEnd && isNearLiveEdge
-                        ? DownloadJobState.RecordingLive
-                        : (mode == LivestreamRecordingMode.RecordFromNow ? DownloadJobState.RecordingLive : DownloadJobState.CatchingUp);
+                    var livePct = 0.0;
+                    var liveState = mode == LivestreamRecordingMode.RecordFromNow ? DownloadJobState.RecordingLive : DownloadJobState.CatchingUp;
+                    string livePhase;
 
-                    var livePhase = liveState == DownloadJobState.RecordingLive
-                        ? "Recording live..."
-                        : (parsed.FragmentIndex is > 0 && parsed.FragmentCount is > 0
-                            ? $"Catching up ({parsed.FragmentIndex}/{parsed.FragmentCount} segments)..."
-                            : "Catching up from start...");
+                    if (watchdog is not null && parsed.FragmentIndex is >= 0)
+                    {
+                        var decision = watchdog.ObserveFragmentProgress(trackKey, parsed.FragmentIndex.Value, parsed.FragmentCount);
+                        livePct = decision.CatchUpProgressPercent;
+
+                        if (decision.MinFragmentIndex is > 0)
+                        {
+                            lastRecordedDuration = TimeSpan.FromSeconds(decision.MinFragmentIndex.Value * watchdog.EstimatedFragmentDurationSeconds);
+                        }
+
+                        if (decision.ShouldStopNow && !modeCStopTriggered)
+                        {
+                            modeCStopTriggered = true;
+                            latestNotice = decision.Reason;
+                            Report(runtime, new DownloadProgressSnapshot(
+                                req.JobId, DownloadJobState.Finalizing, 96, true, lastDownloadedBytes, null, null, null,
+                                lastRecordedDuration, "Reached live-edge target — merging & finalizing...", NonFatalNotice: latestNotice));
+                            try { jobLinkedCts.Cancel(); } catch { }
+                            break;
+                        }
+
+                        livePhase = decision.TargetStopFragment is > 0
+                            ? $"Capturing start → live edge ({decision.MinFragmentIndex}/{decision.TargetStopFragment} segments)"
+                            : $"Capturing historical stream (segment {decision.MinFragmentIndex})...";
+                    }
+                    else if (parsed.FragmentIndex is >= 0 && parsed.FragmentCount is > 0)
+                    {
+                        livePct = Math.Clamp((double)parsed.FragmentIndex.Value / parsed.FragmentCount.Value * 100.0, 0, 100);
+                        var isNearEdge = (parsed.FragmentCount.Value - parsed.FragmentIndex.Value) <= 6;
+                        if (mode == LivestreamRecordingMode.RecordFromStartUntilEnd && isNearEdge)
+                            liveState = DownloadJobState.RecordingLive;
+
+                        livePhase = liveState == DownloadJobState.RecordingLive
+                            ? "Recording live..."
+                            : $"Catching up ({parsed.FragmentIndex}/{parsed.FragmentCount} segments)...";
+                    }
+                    else
+                    {
+                        livePhase = liveState == DownloadJobState.RecordingLive
+                            ? "Recording live..."
+                            : "Catching up from start...";
+                    }
 
                     Report(runtime, new DownloadProgressSnapshot(
                         req.JobId, liveState, livePct,
-                        liveState == DownloadJobState.RecordingLive,
+                        liveState == DownloadJobState.RecordingLive || (mode == LivestreamRecordingMode.RecordFromStartToLiveEdge && livePct <= 0),
                         lastDownloadedBytes, parsed.TotalBytes, parsed.SpeedBytesPerSecond, parsed.Eta,
                         lastRecordedDuration, livePhase, NonFatalNotice: latestNotice));
                     break;
 
                 case ParsedOutputKind.PostProcess:
                     Report(runtime, new DownloadProgressSnapshot(
-                        req.JobId, DownloadJobState.Finalizing, 96, true, lastDownloadedBytes, null, null, null,
-                        lastRecordedDuration, "Finalizing recording...", NonFatalNotice: latestNotice));
+                        req.JobId, DownloadJobState.Finalizing, 97, true, lastDownloadedBytes, null, null, null,
+                        lastRecordedDuration, "Merging & finalizing recording...", NonFatalNotice: latestNotice));
                     break;
             }
         }
+    }
+
+    private async Task<string?> TryManualMuxPartialTracksAsync(ResolvedToolchain toolchain, OutputPathReservation reservation)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(reservation.ReservedBasePath);
+            var baseName = Path.GetFileName(reservation.ReservedBasePath);
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                return null;
+
+            var parts = Directory.EnumerateFiles(dir, $"{baseName}.f*")
+                .Where(f => !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
+                            && !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase)
+                            && new FileInfo(f).Length > 0)
+                .OrderByDescending(f => new FileInfo(f).Length)
+                .ToList();
+
+            if (parts.Count < 2)
+                return null;
+
+            var outputMkv = $"{reservation.ReservedBasePath}.mkv";
+            var res = await _processRunner.RunAsync(new ProcessRunRequest
+            {
+                ExecutablePath = toolchain.FFmpegPath,
+                Arguments = YtDlpArgumentBuilder.BuildManualMuxFallbackArguments(parts[0], parts[1], outputMkv),
+                GracefulStop = GracefulStopStrategy.StdinQuitThenCtrlC,
+                GracefulStopTimeout = TimeSpan.FromSeconds(5)
+            }, CancellationToken.None);
+
+            if (res.ExitCode == 0 && File.Exists(outputMkv) && new FileInfo(outputMkv).Length > 0)
+            {
+                foreach (var f in Directory.EnumerateFiles(dir, $"{baseName}.f*"))
+                {
+                    try { File.Delete(f); } catch { }
+                }
+
+                return outputMkv;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Fallback manual FFmpeg mux of partial livestream tracks failed.");
+        }
+
+        return null;
     }
 
     public static TimeSpan? CalculateModeCTargetDuration(DateTimeOffset? streamStartUtc, int liveEdgeMarginSeconds, DateTimeOffset? nowUtc = null)

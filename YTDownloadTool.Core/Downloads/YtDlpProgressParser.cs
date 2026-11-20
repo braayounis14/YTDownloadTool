@@ -11,7 +11,8 @@ public enum ParsedOutputKind
     FFmpegProgress = 3,
     FinalFilePath = 4,
     DestinationPath = 5,
-    WarningNotice = 6
+    WarningNotice = 6,
+    LiveHeadWait = 7
 }
 
 public sealed record ParsedYtDlpLine(
@@ -25,6 +26,8 @@ public sealed record ParsedYtDlpLine(
     int? FragmentCount = null,
     bool HasVideo = false,
     bool HasAudio = false,
+    string? FormatId = null,
+    string? StreamChannel = null,
     string? PostProcessor = null,
     TimeSpan? MediaTime = null,
     string? FilePath = null,
@@ -37,13 +40,17 @@ public static partial class YtDlpProgressParser
     public const string FinalFilePrefix = "YTDL_FINAL_FILE:";
 
     public const string DownloadTemplate =
-        "download:YTDL_PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.fragment_index)s|%(progress.fragment_count)s|%(info.vcodec)s|%(info.acodec)s";
+        "download:YTDL_PROG|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.fragment_index)s|%(progress.fragment_count)s|%(info.vcodec)s|%(info.acodec)s|%(info.format_id)s";
 
     public const string PostProcessTemplate =
         "postprocess:YTDL_PP|%(progress.status)s|%(progress.postprocessor)s";
 
     public const string AfterMovePrintTemplate =
         "after_move:YTDL_FINAL_FILE:%(filepath)s";
+
+    // Matches concurrent multi-stream prefix emitted by yt-dlp --live-from-start (e.g. "1: YTDL_PROG|..." / "2: YTDL_PROG|...")
+    [GeneratedRegex(@"^(?<ch>\d+):\s+(?<rest>.+)$", RegexOptions.Compiled)]
+    private static partial Regex MultiStreamPrefixRegex();
 
     [GeneratedRegex(@"time=(\d{2,}):(\d{2}):(\d{2}(?:\.\d+)?)", RegexOptions.Compiled)]
     private static partial Regex FFmpegTimeRegex();
@@ -63,6 +70,14 @@ public static partial class YtDlpProgressParser
             return new ParsedYtDlpLine(ParsedOutputKind.None);
 
         var trimmed = line.Trim();
+        string? streamChannel = null;
+
+        var channelMatch = MultiStreamPrefixRegex().Match(trimmed);
+        if (channelMatch.Success)
+        {
+            streamChannel = channelMatch.Groups["ch"].Value;
+            trimmed = channelMatch.Groups["rest"].Value.TrimStart();
+        }
 
         if (trimmed.StartsWith(FinalFilePrefix, StringComparison.Ordinal))
         {
@@ -72,7 +87,7 @@ public static partial class YtDlpProgressParser
 
         if (trimmed.StartsWith(ProgressPrefix, StringComparison.Ordinal))
         {
-            return ParseStructuredProgress(trimmed[ProgressPrefix.Length..]);
+            return ParseStructuredProgress(trimmed[ProgressPrefix.Length..], streamChannel);
         }
 
         if (trimmed.StartsWith(PostProcessPrefix, StringComparison.Ordinal))
@@ -124,6 +139,12 @@ public static partial class YtDlpProgressParser
             }
         }
 
+        if (trimmed.Contains("Waiting for new fragments", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("Giving up after", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ParsedYtDlpLine(ParsedOutputKind.LiveHeadWait, Notice: trimmed);
+        }
+
         if (trimmed.StartsWith("WARNING:", StringComparison.OrdinalIgnoreCase))
         {
             if (trimmed.Contains("Starting download from the last", StringComparison.OrdinalIgnoreCase)
@@ -137,7 +158,7 @@ public static partial class YtDlpProgressParser
         return new ParsedYtDlpLine(ParsedOutputKind.None);
     }
 
-    private static ParsedYtDlpLine ParseStructuredProgress(string payload)
+    private static ParsedYtDlpLine ParseStructuredProgress(string payload, string? streamChannel)
     {
         var parts = payload.Split('|');
         if (parts.Length < 8)
@@ -148,11 +169,15 @@ public static partial class YtDlpProgressParser
         var total = TryParseLong(parts[2]) ?? TryParseLong(parts[3]);
         var speed = TryParseDouble(parts[4]);
         var etaSeconds = TryParseDouble(parts[5]);
-        var fragIdx = TryParseInt(parts[6]);
+
+        // Only trust fragment_index on active downloading lines (yt-dlp emits NA/empty on 'finished')
+        var isFinished = status.Equals("finished", StringComparison.OrdinalIgnoreCase);
+        var fragIdx = isFinished ? null : TryParseInt(parts[6]);
         var fragCount = TryParseInt(parts[7]);
 
         var vcodec = parts.Length > 8 ? parts[8].Trim() : string.Empty;
         var acodec = parts.Length > 9 ? parts[9].Trim() : string.Empty;
+        var formatId = parts.Length > 10 && !IsEmptyOrNone(parts[10]) ? parts[10].Trim() : null;
         var hasVideo = !IsEmptyOrNone(vcodec);
         var hasAudio = !IsEmptyOrNone(acodec);
 
@@ -170,7 +195,9 @@ public static partial class YtDlpProgressParser
             FragmentIndex: fragIdx,
             FragmentCount: fragCount,
             HasVideo: hasVideo,
-            HasAudio: hasAudio);
+            HasAudio: hasAudio,
+            FormatId: formatId,
+            StreamChannel: streamChannel);
     }
 
     private static bool IsEmptyOrNone(string value) =>
