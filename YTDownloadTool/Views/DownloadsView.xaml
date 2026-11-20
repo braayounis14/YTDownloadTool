@@ -94,21 +94,21 @@
                         <StackPanel>
                             <TextBlock Text="LIVESTREAM RECORDING MODE" Foreground="#FF7CA3" FontSize="11" FontWeight="Bold" Margin="0,0,0,8" />
 
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13" Margin="0,0,18,0"
+                            <WrapPanel Margin="0,0,0,8">
+                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13" Margin="0,2,18,4"
                                              IsChecked="{Binding SelectedLivestreamMode, Converter={StaticResource EnumEquals}, ConverterParameter=RecordFromNow}"
                                              Content="Mode A — Record from now until end" />
 
-                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13" Margin="0,0,18,0"
+                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13" Margin="0,2,18,4"
                                              IsEnabled="{Binding IsDvrAvailable}"
                                              IsChecked="{Binding SelectedLivestreamMode, Converter={StaticResource EnumEquals}, ConverterParameter=RecordFromStartUntilEnd}"
                                              Content="Mode B — From start until end (DVR)" />
 
-                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13"
+                                <RadioButton GroupName="LiveMode" Foreground="White" FontSize="13" Margin="0,2,0,4"
                                              IsEnabled="{Binding IsDvrAvailable}"
                                              IsChecked="{Binding SelectedLivestreamMode, Converter={StaticResource EnumEquals}, ConverterParameter=RecordFromStartToLiveEdge}"
                                              Content="Mode C — From start, stop near live edge" />
-                            </StackPanel>
+                            </WrapPanel>
 
                             <!-- Mode C Live-Edge Margin Selector -->
                             <StackPanel Orientation="Horizontal" Visibility="{Binding IsModeCSelected, Converter={StaticResource BoolToVis}}" Margin="0,4,0,8">
@@ -132,16 +132,12 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Quality, Format, Destination & Start Action Row -->
+                    <!-- Quality, Format, Destination & Start Action Rows (responsive down to MinWidth=960) -->
                     <Grid Margin="0,16,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="120" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="1.6*" />
-                            <ColumnDefinition Width="12" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="130" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0">
@@ -155,22 +151,31 @@
                             <ComboBox ItemsSource="{Binding AvailableContainers}" SelectedItem="{Binding SelectedContainer}"
                                       Style="{StaticResource DarkComboBox}" />
                         </StackPanel>
+                    </Grid>
 
-                        <StackPanel Grid.Column="4">
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
                             <TextBlock Text="SAVE TO" Foreground="{StaticResource MutedTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,5" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBox Text="{Binding OutputDirectory}" IsReadOnly="True" Style="{StaticResource DarkTextBox}" Padding="10,7" FontSize="12" />
+                                <TextBox Text="{Binding OutputDirectory}" IsReadOnly="True" Style="{StaticResource DarkTextBox}"
+                                         Padding="10,7" FontSize="12" ToolTip="{Binding OutputDirectory}" />
                                 <Button Grid.Column="1" Content="..." Command="{Binding BrowseOutputFolderCommand}"
                                         Style="{StaticResource SecondaryButton}" Margin="6,0,0,0" Padding="10,6" ToolTip="Choose folder" />
                             </Grid>
                         </StackPanel>
 
-                        <Button Grid.Column="6" Command="{Binding StartDownloadCommand}" IsEnabled="{Binding CanStartDownload}"
-                                Style="{StaticResource PrimaryButton}" VerticalAlignment="Bottom" MinWidth="150" Height="38">
+                        <Button Grid.Column="2" Command="{Binding StartDownloadCommand}" IsEnabled="{Binding CanStartDownload}"
+                                Style="{StaticResource PrimaryButton}" VerticalAlignment="Bottom" MinWidth="165" Height="38">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="&#xE896;" Style="{StaticResource SFIcon}" Margin="0,0,8,0" />
                                 <TextBlock Text="{Binding StartButtonText}" />
@@ -283,11 +288,16 @@
                                     <Border Visibility="{Binding ErrorMessage, Converter={StaticResource StrToVis}}"
                                             Background="#24DA3633" BorderBrush="#66DA3633" BorderThickness="1" CornerRadius="8" Padding="10,7">
                                         <StackPanel>
-                                            <DockPanel>
-                                                <Button Content="Details" Command="{Binding ToggleDiagnosticsCommand}" DockPanel.Dock="Right"
-                                                        Style="{StaticResource SecondaryButton}" Padding="8,3" FontSize="10" Margin="8,0,0,0" />
-                                                <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFB4B1" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                            </DockPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding ErrorMessage}" Foreground="#FFB4B1" FontSize="12"
+                                                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                                <Button Grid.Column="1" Content="Details" Command="{Binding ToggleDiagnosticsCommand}"
+                                                        Style="{StaticResource SecondaryButton}" Padding="8,3" FontSize="10" VerticalAlignment="Top" />
+                                            </Grid>
                                             <TextBox Text="{Binding TechnicalDetails, Mode=OneWay}" IsReadOnly="True"
                                                      Visibility="{Binding ShowDiagnostics, Converter={StaticResource BoolToVis}}"
                                                      Background="#18000000" Foreground="#CCC" BorderThickness="0"

@@ -33,17 +33,32 @@ public sealed class DownloadOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task StandardVodDownload_TracksMultiStreamProgressAndPersistsHistory()
+    public async Task StandardVodDownload_UsesIsolatedTempDir_KeepsSaveFolderClean_AndPersistsHistory()
     {
         var settings = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settings.LoadAsync();
         var history = new HistoryStore(_paths, NullLogger<HistoryStore>.Instance);
         var tc = CreateFakeToolchain();
 
+        string? capturedTempDir = null;
+
         var runner = new DelegateProcessRunner(async (req, _) =>
         {
-            var outTemplate = req.Arguments[req.Arguments.ToList().IndexOf("-o") + 1];
-            var mp4Path = outTemplate.Replace(".%(ext)s", ".mp4", StringComparison.Ordinal);
+            var argList = req.Arguments.ToList();
+            var homeDir = ExtractPrefixedArg(argList, "home:");
+            var tempDir = ExtractPrefixedArg(argList, "temp:");
+            var outTemplate = argList[argList.IndexOf("-o") + 1];
+            capturedTempDir = tempDir;
+
+            Assert.Equal(Path.GetFullPath(_outDir), homeDir);
+            Assert.StartsWith(_paths.TempDownloadsDirectory, tempDir, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Path.IsPathRooted(outTemplate));
+
+            // Simulate fragment files written strictly into job temp dir — Save folder stays empty!
+            await File.WriteAllBytesAsync(Path.Combine(tempDir, "frag1.part-Frag1"), new byte[256]);
+            Assert.Empty(Directory.GetFiles(_outDir));
+
+            var mp4Path = Path.Combine(homeDir, outTemplate.Replace(".%(ext)s", ".mp4", StringComparison.Ordinal));
 
             req.OnStandardOutput?.Invoke("YTDL_PROG|downloading|5000000|10000000|NA|2000000|2|NA|NA|avc1|none|137");
             req.OnStandardOutput?.Invoke("YTDL_PROG|finished|10000000|10000000|NA|2000000|0|NA|NA|avc1|none|137");
@@ -55,7 +70,7 @@ public sealed class DownloadOrchestratorTests : IDisposable
             return new ProcessRunResult(0, false, false, false, TimeSpan.FromSeconds(1), string.Empty, string.Empty);
         });
 
-        await using var orch = new DownloadOrchestrator(new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
 
         var snapshots = new List<DownloadProgressSnapshot>();
         var doneTcs = new TaskCompletionSource<DownloadProgressSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -77,33 +92,39 @@ public sealed class DownloadOrchestratorTests : IDisposable
         Assert.Contains(snapshots, s => s.PhaseLabel.Contains("video", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(snapshots, s => s.PhaseLabel.Contains("audio", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(snapshots, s => s.State == DownloadJobState.Finalizing);
+        Assert.Single(Directory.GetFiles(_outDir));
+        Assert.NotNull(capturedTempDir);
+        Assert.False(Directory.Exists(capturedTempDir), "Per-job temp folder must be deleted after completion.");
         Assert.Single(await history.LoadAsync());
     }
 
     [Fact]
-    public async Task StandardVodCancel_CleansUpPartialTempFiles()
+    public async Task StandardVodCancel_DeletesJobTempFolderAndLeavesSaveFolderEmpty()
     {
         var settings = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settings.LoadAsync();
         var history = new HistoryStore(_paths, NullLogger<HistoryStore>.Instance);
         var tc = CreateFakeToolchain();
 
-        string? createdPartPath = null;
+        string? jobTempDir = null;
         var startedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var runner = new DelegateProcessRunner(async (req, ct) =>
         {
-            var outTemplate = req.Arguments[req.Arguments.ToList().IndexOf("-o") + 1];
-            var basePath = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
-            createdPartPath = basePath + ".f137.mp4.part";
-            await File.WriteAllBytesAsync(createdPartPath, new byte[1024], CancellationToken.None);
+            var argList = req.Arguments.ToList();
+            jobTempDir = ExtractPrefixedArg(argList, "temp:");
+            var outTemplate = argList[argList.IndexOf("-o") + 1];
+            var relBase = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
+
+            await File.WriteAllBytesAsync(Path.Combine(jobTempDir, relBase + ".f137.mp4.part"), new byte[1024], CancellationToken.None);
+            await File.WriteAllBytesAsync(Path.Combine(jobTempDir, relBase + ".f137.mp4.part-Frag4"), new byte[512], CancellationToken.None);
             startedTcs.TrySetResult();
 
             try { await Task.Delay(TimeSpan.FromSeconds(15), ct); } catch (OperationCanceledException) { }
             return new ProcessRunResult(-1, WasCancelled: true, GracefulStopUsed: true, ForceKilled: false, TimeSpan.FromMilliseconds(50), string.Empty, string.Empty);
         });
 
-        await using var orch = new DownloadOrchestrator(new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
 
         var doneTcs = new TaskCompletionSource<DownloadProgressSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var q = new QualityOption("video-1080-std", "1080p", false, 1080, 30, "H.264", null, "bv*+ba/b", null, true, ["mp4"]);
@@ -120,12 +141,13 @@ public sealed class DownloadOrchestratorTests : IDisposable
 
         var final = await doneTcs.Task.WaitAsync(TimeSpan.FromSeconds(8));
         Assert.Equal(DownloadJobState.Cancelled, final.State);
-        Assert.NotNull(createdPartPath);
-        Assert.False(File.Exists(createdPartPath), "Partial .part file should be cleaned up when a VOD download is cancelled.");
+        Assert.Empty(Directory.GetFiles(_outDir));
+        Assert.NotNull(jobTempDir);
+        Assert.False(Directory.Exists(jobTempDir), "Job temp folder must be deleted when a VOD download is cancelled.");
     }
 
     [Fact]
-    public async Task LivestreamModeA_StopAndSave_PreservesCapturedRecording()
+    public async Task LivestreamModeA_StopAndSave_RemuxesInTempAndMovesFinalMp4ToSaveFolder()
     {
         var settings = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settings.LoadAsync();
@@ -133,14 +155,17 @@ public sealed class DownloadOrchestratorTests : IDisposable
         var tc = CreateFakeToolchain();
 
         var startedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? jobTempDir = null;
 
         var runner = new DelegateProcessRunner(async (req, ct) =>
         {
             if (req.ExecutablePath.EndsWith("yt-dlp.exe", StringComparison.OrdinalIgnoreCase))
             {
-                var outTemplate = req.Arguments[req.Arguments.ToList().IndexOf("-o") + 1];
-                var basePath = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
-                var tsPath = basePath + ".mkv";
+                var argList = req.Arguments.ToList();
+                jobTempDir = ExtractPrefixedArg(argList, "temp:");
+                var outTemplate = argList[argList.IndexOf("-o") + 1];
+                var relBase = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
+                var tsPath = Path.Combine(jobTempDir, relBase + ".mkv.part");
 
                 req.OnStandardError?.Invoke("frame=  120 fps=30 q=-1.0 size=   2048KiB time=00:00:04.00 bitrate= 4100kbits/s");
                 await File.WriteAllBytesAsync(tsPath, new byte[4096], CancellationToken.None);
@@ -150,12 +175,14 @@ public sealed class DownloadOrchestratorTests : IDisposable
                 return new ProcessRunResult(0, WasCancelled: true, GracefulStopUsed: true, ForceKilled: false, TimeSpan.FromSeconds(1), string.Empty, string.Empty);
             }
 
-            // FFmpeg remux to mp4
+            // FFmpeg remux to mp4 must happen inside jobTempDir, keeping Save folder clean!
+            Assert.StartsWith(_paths.TempDownloadsDirectory, req.Arguments[^1], StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(Directory.GetFiles(_outDir));
             await File.WriteAllBytesAsync(req.Arguments[^1], new byte[4096], CancellationToken.None);
             return new ProcessRunResult(0, false, false, false, TimeSpan.FromMilliseconds(20), string.Empty, string.Empty);
         });
 
-        await using var orch = new DownloadOrchestrator(new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
 
         var doneTcs = new TaskCompletionSource<DownloadProgressSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var q = new QualityOption("video-720-std", "720p", false, 720, 60, "H.264", null, "b[height<=720]/b", null, false, ["mkv", "mp4"]);
@@ -176,7 +203,12 @@ public sealed class DownloadOrchestratorTests : IDisposable
         Assert.Equal(DownloadJobState.Completed, final.State);
         Assert.Contains("stopped & saved", final.PhaseLabel, StringComparison.OrdinalIgnoreCase);
         Assert.NotNull(final.OutputFilePath);
+        Assert.StartsWith(_outDir, final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith(".mp4", final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(final.OutputFilePath));
+        Assert.Single(Directory.GetFiles(_outDir));
+        Assert.NotNull(jobTempDir);
+        Assert.False(Directory.Exists(jobTempDir));
     }
 
     [Fact]
@@ -188,7 +220,7 @@ public sealed class DownloadOrchestratorTests : IDisposable
         var tc = CreateFakeToolchain();
 
         var runner = new DelegateProcessRunner((_, _) => throw new InvalidOperationException("yt-dlp must not launch when DVR is disabled."));
-        await using var orch = new DownloadOrchestrator(new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
 
         var doneTcs = new TaskCompletionSource<DownloadProgressSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var q = new QualityOption("best", "Best", false, 1080, 60, "H.264", null, "bv*+ba/b", null, true, ["mkv"]);
@@ -208,7 +240,7 @@ public sealed class DownloadOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task LivestreamModeC_WhenPartialTracksLeftUnmerged_FallbackMuxesWithFFmpeg()
+    public async Task LivestreamModeC_WhenPartialTracksLeftInTemp_FallbackMuxesAndMovesToSaveFolder()
     {
         var settings = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settings.LoadAsync();
@@ -216,22 +248,29 @@ public sealed class DownloadOrchestratorTests : IDisposable
         var tc = CreateFakeToolchain();
 
         var manualMuxInvoked = false;
+        string? jobTempDir = null;
+
         var runner = new DelegateProcessRunner(async (req, _) =>
         {
             if (req.ExecutablePath.EndsWith("yt-dlp.exe", StringComparison.OrdinalIgnoreCase))
             {
-                var outTemplate = req.Arguments[req.Arguments.ToList().IndexOf("-o") + 1];
-                var basePath = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
+                var argList = req.Arguments.ToList();
+                jobTempDir = ExtractPrefixedArg(argList, "temp:");
+                var outTemplate = argList[argList.IndexOf("-o") + 1];
+                var relBase = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
 
-                // Simulate interrupted download leaving separate .f134.mp4.part and .f140.m4a.part files
-                await File.WriteAllBytesAsync(basePath + ".f134.mp4.part", new byte[8192]);
-                await File.WriteAllBytesAsync(basePath + ".f140.m4a.part", new byte[2048]);
+                // Simulate interrupted download leaving separate .f134 + .f140 partial tracks strictly inside jobTempDir
+                await File.WriteAllBytesAsync(Path.Combine(jobTempDir, relBase + ".f134.mp4.part"), new byte[8192]);
+                await File.WriteAllBytesAsync(Path.Combine(jobTempDir, relBase + ".f140.m4a.part"), new byte[2048]);
+                Assert.Empty(Directory.GetFiles(_outDir));
+
                 return new ProcessRunResult(1, WasCancelled: true, GracefulStopUsed: true, ForceKilled: false, TimeSpan.FromSeconds(1), string.Empty, string.Empty);
             }
 
             if (req.Arguments.Contains("-shortest"))
             {
                 manualMuxInvoked = true;
+                Assert.StartsWith(_paths.TempDownloadsDirectory, req.Arguments[^1], StringComparison.OrdinalIgnoreCase);
                 await File.WriteAllBytesAsync(req.Arguments[^1], new byte[10240]);
                 return new ProcessRunResult(0, false, false, false, TimeSpan.FromMilliseconds(20), string.Empty, string.Empty);
             }
@@ -239,7 +278,7 @@ public sealed class DownloadOrchestratorTests : IDisposable
             return new ProcessRunResult(0, false, false, false, TimeSpan.FromMilliseconds(20), string.Empty, string.Empty);
         });
 
-        await using var orch = new DownloadOrchestrator(new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(tc), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
 
         var doneTcs = new TaskCompletionSource<DownloadProgressSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var q = new QualityOption("video-360", "360p", false, 360, 30, "H.264", null, "134+140", null, true, ["mkv"]);
@@ -258,22 +297,54 @@ public sealed class DownloadOrchestratorTests : IDisposable
         Assert.Equal(DownloadJobState.Completed, final.State);
         Assert.True(manualMuxInvoked);
         Assert.NotNull(final.OutputFilePath);
+        Assert.StartsWith(_outDir, final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
         Assert.EndsWith(".mkv", final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(final.OutputFilePath));
+        Assert.Single(Directory.GetFiles(_outDir));
+        Assert.NotNull(jobTempDir);
+        Assert.False(Directory.Exists(jobTempDir));
     }
 
     [Fact]
-    public void AudioOnlyArguments_UseFFmpegExtractAudioFlags()
+    public async Task PruneOrphanedTempDirectories_CleansUpStaleJobFolders()
+    {
+        var orphanDir = Path.Combine(_paths.TempDownloadsDirectory, "stale-crash-job-123");
+        Directory.CreateDirectory(orphanDir);
+        await File.WriteAllBytesAsync(Path.Combine(orphanDir, "leftover.part-Frag99"), new byte[128]);
+
+        var settings = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
+        await settings.LoadAsync();
+        var history = new HistoryStore(_paths, NullLogger<HistoryStore>.Instance);
+        var runner = new DelegateProcessRunner((_, _) => Task.FromResult(new ProcessRunResult(0, false, false, false, TimeSpan.Zero, "", "")));
+
+        await using var orch = new DownloadOrchestrator(_paths, new StubToolManager(CreateFakeToolchain()), runner, settings, history, new OutputPathGuard(), NullLogger<DownloadOrchestrator>.Instance);
+        orch.PruneOrphanedTempDirectories();
+
+        Assert.False(Directory.Exists(orphanDir));
+    }
+
+    [Fact]
+    public void AudioOnlyArguments_UseFFmpegExtractAudioFlagsAndIsolatedTempPaths()
     {
         var tc = CreateFakeToolchain();
         var audioQ = new QualityOption("audio-mp3", "Audio Only — MP3", true, null, null, "MP3", null, "ba/b", "mp3", true, ["mp3"]);
         var req = new DownloadJobRequest("a1", "dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Song", "Artist", null, _outDir, audioQ, "mp3", MediaLiveStatus.NotLive);
+        var jobTemp = Path.Combine(_paths.TempDownloadsDirectory, "a1");
 
-        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(tc, req, Path.Combine(_outDir, "Song [dQw4w9WgXcQ]"));
+        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(tc, req, _outDir, jobTemp, "Song [dQw4w9WgXcQ]");
         Assert.Contains("-x", args);
         Assert.Contains("--audio-format", args);
         Assert.Contains("mp3", args);
         Assert.Contains("--audio-quality", args);
+        Assert.Contains($"home:{Path.GetFullPath(_outDir)}", args);
+        Assert.Contains($"temp:{Path.GetFullPath(jobTemp)}", args);
+        Assert.Equal("Song [dQw4w9WgXcQ].%(ext)s", args[args.ToList().IndexOf("-o") + 1]);
+    }
+
+    private static string ExtractPrefixedArg(List<string> args, string prefix)
+    {
+        var match = args.First(a => a.StartsWith(prefix, StringComparison.Ordinal));
+        return match[prefix.Length..];
     }
 
     private static ResolvedToolchain CreateFakeToolchain() => new(

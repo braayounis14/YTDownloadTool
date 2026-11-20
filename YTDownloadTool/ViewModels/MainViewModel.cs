@@ -82,6 +82,7 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task InitializeAsync()
     {
         await _settingsStore.LoadAsync();
+        _orchestrator.PruneOrphanedTempDirectories();
         Downloads.RefreshSettingsFromStore();
         await Library.RefreshAsync();
 

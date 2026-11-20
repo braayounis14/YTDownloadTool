@@ -43,7 +43,7 @@ jobs:
         run: |
           dotnet tool restore
           New-Item -ItemType Directory -Force -Path artifacts\prev-releases | Out-Null
-          dotnet vpk download github --repoUrl "https://github.com/${{ github.repository }}" --outputDir artifacts\prev-releases
+          dotnet vpk download github --repoUrl "https://github.com/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" --outputDir artifacts\prev-releases
 
       - name: Build, Test, Stage Tools & Package Velopack Release
         shell: pwsh
@@ -51,10 +51,12 @@ jobs:
           .\scripts\build-release.ps1 -Version "${{ steps.ver.outputs.version }}" -PreviousReleasesDir "artifacts\prev-releases"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: YTDownloadTool v${{ steps.ver.outputs.version }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             artifacts/Releases/*
+            THIRD_PARTY_NOTICES.txt

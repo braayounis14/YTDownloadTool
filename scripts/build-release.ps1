@@ -96,8 +96,7 @@ try {
 
     if ($LASTEXITCODE -ne 0) { throw "vpk pack failed." }
 
-    # Also copy compliance files alongside release outputs for easy upload to GitHub Releases
-    Copy-Item (Join-Path $repoRoot "THIRD_PARTY_NOTICES.txt") $releasesDir -Force
+    # Copy provenance alongside Velopack outputs (THIRD_PARTY_NOTICES.txt lives at repo root and inside Setup.exe)
     Copy-Item (Join-Path $publishDir "BaselineTools\BASELINE_PROVENANCE.txt") $releasesDir -Force
 
     Write-Host "`n=== Release Artifacts Created in $releasesDir ===" -ForegroundColor Green

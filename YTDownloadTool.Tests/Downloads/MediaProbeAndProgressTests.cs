@@ -1,4 +1,4 @@
-using System.Globalization;
+ using System.Globalization;
 using Xunit;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Settings;
@@ -61,6 +61,13 @@ public sealed class MediaProbeAndProgressTests : IDisposable
         Assert.DoesNotContain(result.AvailableQualities, q => q.Height == 1440);
         Assert.Contains(result.AvailableQualities, q => q.IsAudioOnly && q.PreferredAudioExtension == "mp3");
         Assert.Contains(result.AvailableQualities, q => q.IsAudioOnly && q.PreferredAudioExtension == "m4a");
+
+        // Bug 1 regression guard: QualityOption.ToString() must return clean Label, never raw record syntax
+        foreach (var opt in result.AvailableQualities)
+        {
+            Assert.Equal(opt.Label, opt.ToString());
+            Assert.DoesNotContain("QualityOption {", opt.ToString(), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -136,16 +143,27 @@ public sealed class MediaProbeAndProgressTests : IDisposable
 
         var quality = new QualityOption("video-1080-std", "1080p", false, 1080, 30, "H.264", null, "bv*[height<=1080]+ba/b", null, true, ["mp4", "mkv"]);
         var req = new DownloadJobRequest("j1", "dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Test", "Chan", null, _tempDir, quality, "mp4", MediaLiveStatus.NotLive);
+        var jobTempDir = Path.Combine(_tempDir, "temp-j1");
 
-        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(tc, req, Path.Combine(_tempDir, "Test [dQw4w9WgXcQ]"));
+        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(tc, req, _tempDir, jobTempDir, "Test [dQw4w9WgXcQ]");
 
         Assert.DoesNotContain(args, a => a.Contains("player-client=ios", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("--js-runtimes", args);
         Assert.Contains(@"deno:C:\Tools\deno\deno.exe", args);
         Assert.Contains("--ffmpeg-location", args);
         Assert.Contains(@"C:\Tools\ffmpeg", args);
+        Assert.Contains($"home:{Path.GetFullPath(_tempDir)}", args);
+        Assert.Contains($"temp:{Path.GetFullPath(jobTempDir)}", args);
+        var oIdx = args.ToList().IndexOf("-o");
+        Assert.True(oIdx >= 0);
+        Assert.Equal("Test [dQw4w9WgXcQ].%(ext)s", args[oIdx + 1]);
+        Assert.False(Path.IsPathRooted(args[oIdx + 1]));
         Assert.Contains("--", args);
         Assert.Equal("https://www.youtube.com/watch?v=dQw4w9WgXcQ", args[^1]);
+
+        // Absolute -o template must be rejected so yt-dlp never ignores -P home/temp
+        Assert.Throws<ArgumentException>(() =>
+            YtDlpArgumentBuilder.BuildStandardDownloadArguments(tc, req, _tempDir, jobTempDir, Path.Combine(_tempDir, "Test [dQw4w9WgXcQ]")));
     }
 
     [Fact]

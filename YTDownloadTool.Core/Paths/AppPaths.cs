@@ -8,6 +8,7 @@ public interface IAppPaths
     string ToolsDirectory { get; }
     string ToolsManifestPath { get; }
     string ToolsStagingDirectory { get; }
+    string TempDownloadsDirectory { get; }
     string LogsDirectory { get; }
     string SettingsRootDirectory { get; }
     string SettingsFilePath { get; }
@@ -40,6 +41,7 @@ public sealed class DefaultAppPaths : IAppPaths
         ToolsDirectory = Path.Combine(DataRootDirectory, "Tools");
         ToolsManifestPath = Path.Combine(ToolsDirectory, "manifest.json");
         ToolsStagingDirectory = Path.Combine(ToolsDirectory, "staging");
+        TempDownloadsDirectory = Path.Combine(DataRootDirectory, "Temp");
         LogsDirectory = Path.Combine(DataRootDirectory, "Logs");
 
         SettingsRootDirectory = Path.Combine(resolvedRoaming, AppFolderName);
@@ -55,6 +57,7 @@ public sealed class DefaultAppPaths : IAppPaths
     public string ToolsDirectory { get; }
     public string ToolsManifestPath { get; }
     public string ToolsStagingDirectory { get; }
+    public string TempDownloadsDirectory { get; }
     public string LogsDirectory { get; }
     public string SettingsRootDirectory { get; }
     public string SettingsFilePath { get; }
@@ -66,6 +69,7 @@ public sealed class DefaultAppPaths : IAppPaths
         Directory.CreateDirectory(DataRootDirectory);
         Directory.CreateDirectory(ToolsDirectory);
         Directory.CreateDirectory(ToolsStagingDirectory);
+        Directory.CreateDirectory(TempDownloadsDirectory);
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(SettingsRootDirectory);
     }

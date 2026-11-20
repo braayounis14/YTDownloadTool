@@ -34,9 +34,21 @@ logs/
 *.part
 *.ytdl
 
+## Signing Certificates & Private Keys
+*.pfx
+*.p12
+*.snk
+*.key
+
 ## OS / IDE
 Thumbs.db
 Desktop.ini
 .DS_Store
 .idea/
 .vscode/
+
+## Code Signing & Secrets (future-proofing for Authenticode)
+*.pfx
+*.p12
+*.snk
+*.key

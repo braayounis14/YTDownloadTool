@@ -133,11 +133,18 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
         {
             if (req.ExecutablePath.EndsWith("yt-dlp.exe", StringComparison.OrdinalIgnoreCase))
             {
-                // Extract output template base path from "-o <base>.%(ext)s"
-                var outIdx = req.Arguments.ToList().IndexOf("-o");
-                var outTemplate = req.Arguments[outIdx + 1];
-                var basePath = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
-                var mkvPath = basePath + ".mkv";
+                var argList = req.Arguments.ToList();
+                var tempPathArg = argList.First(a => a.StartsWith("temp:", StringComparison.Ordinal))["temp:".Length..];
+                var homePathArg = argList.First(a => a.StartsWith("home:", StringComparison.Ordinal))["home:".Length..];
+                var outTemplate = argList[argList.IndexOf("-o") + 1];
+                Assert.False(Path.IsPathRooted(outTemplate), "-o must be relative so yt-dlp honors -P temp/home.");
+
+                var relBase = outTemplate.Replace(".%(ext)s", string.Empty, StringComparison.Ordinal);
+                var mkvPath = Path.Combine(homePathArg, relBase + ".mkv");
+
+                // Save folder MUST remain empty during staging!
+                Assert.Empty(Directory.GetFiles(outDir));
+                await File.WriteAllBytesAsync(Path.Combine(tempPathArg, relBase + ".f134.mp4.part-Frag1"), new byte[128], CancellationToken.None);
 
                 // Simulate 20-fragment stream (started 100s ago -> ~5s/frag, margin 30s -> target = 14)
                 req.OnStandardOutput?.Invoke("1: YTDL_PROG|downloading|100000|NA|NA|500000|NA|10|20|avc1|none|134");
@@ -148,21 +155,23 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
                 // Mode C watchdog should cancel ct immediately when both tracks hit 14
                 Assert.True(ct.IsCancellationRequested, "Expected ModeCLiveEdgeWatchdog to request graceful stop.");
 
-                // Simulate yt-dlp catching CTRL_C, merging MKV, and printing YTDL_FINAL_FILE
+                // Simulate yt-dlp catching CTRL_C, merging MKV into temp/home, and printing YTDL_FINAL_FILE
                 await File.WriteAllBytesAsync(mkvPath, new byte[4096], CancellationToken.None);
                 req.OnStandardOutput?.Invoke($"YTDL_FINAL_FILE:{mkvPath}");
 
                 return new ProcessRunResult(0, WasCancelled: true, GracefulStopUsed: true, ForceKilled: false, TimeSpan.FromSeconds(1), string.Empty, string.Empty);
             }
 
-            // Simulate FFmpeg MKV -> MP4 faststart remux
+            // Simulate FFmpeg MKV -> MP4 faststart remux inside job temp dir
             ffmpegCalledForRemux = true;
             var mp4Out = req.Arguments[^1];
+            Assert.StartsWith(paths.TempDownloadsDirectory, mp4Out, StringComparison.OrdinalIgnoreCase);
             await File.WriteAllBytesAsync(mp4Out, new byte[4096], CancellationToken.None);
             return new ProcessRunResult(0, false, false, false, TimeSpan.FromMilliseconds(50), string.Empty, string.Empty);
         });
 
         await using var orchestrator = new DownloadOrchestrator(
+            paths,
             fakeToolManager,
             fakeRunner,
             settingsStore,
@@ -202,8 +211,12 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
         Assert.Equal(DownloadJobState.Completed, final.State);
         Assert.True(ffmpegCalledForRemux);
         Assert.NotNull(final.OutputFilePath);
+        Assert.StartsWith(outDir, final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
         Assert.EndsWith(".mp4", final.OutputFilePath!, StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(final.OutputFilePath));
+        // Only the final MP4 exists in Save folder and jobTempDir is deleted cleanly
+        Assert.Single(Directory.GetFiles(outDir));
+        Assert.False(Directory.Exists(Path.Combine(paths.TempDownloadsDirectory, "live-mode-c-1")));
 
         var history = await historyStore.LoadAsync();
         Assert.Single(history);

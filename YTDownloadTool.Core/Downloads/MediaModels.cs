@@ -69,6 +69,8 @@ public sealed record QualityOption(
             > 0 => $"{Height}p",
             _ => "BEST"
         };
+
+    public override string ToString() => Label;
 }
 
 public sealed record DvrProbeInfo(

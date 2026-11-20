@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Livestream;
+using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Tools;
@@ -11,6 +12,7 @@ namespace YTDownloadTool.Core.Downloads;
 public interface IDownloadOrchestrator : IAsyncDisposable
 {
     int ActiveJobCount { get; }
+    void PruneOrphanedTempDirectories();
     Task<string> EnqueueAsync(DownloadJobRequest request, IProgress<DownloadProgressSnapshot>? progress = null, CancellationToken ct = default);
     bool RequestCancel(string jobId);
     Task CancelAllAsync(TimeSpan? timeout = null);
@@ -18,6 +20,7 @@ public interface IDownloadOrchestrator : IAsyncDisposable
 
 public sealed class DownloadOrchestrator : IDownloadOrchestrator
 {
+    private readonly IAppPaths _paths;
     private readonly IToolManager _toolManager;
     private readonly IProcessRunner _processRunner;
     private readonly ISettingsStore _settingsStore;
@@ -33,6 +36,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
     private int _disposed;
 
     public DownloadOrchestrator(
+        IAppPaths paths,
         IToolManager toolManager,
         IProcessRunner processRunner,
         ISettingsStore settingsStore,
@@ -40,6 +44,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         OutputPathGuard outputPathGuard,
         ILogger<DownloadOrchestrator> logger)
     {
+        _paths = paths;
         _toolManager = toolManager;
         _processRunner = processRunner;
         _settingsStore = settingsStore;
@@ -54,6 +59,32 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
     }
 
     public int ActiveJobCount => _activeJobs.Count;
+
+    /// <summary>
+    /// Removes orphaned per-job temp folders left over under %LocalAppData%\YTDownloadToolData\Temp\
+    /// from previous unexpected shutdowns or crashes without touching currently active jobs.
+    /// </summary>
+    public void PruneOrphanedTempDirectories()
+    {
+        try
+        {
+            if (!Directory.Exists(_paths.TempDownloadsDirectory))
+                return;
+
+            foreach (var dir in Directory.EnumerateDirectories(_paths.TempDownloadsDirectory))
+            {
+                var folderName = Path.GetFileName(dir);
+                if (_activeJobs.ContainsKey(folderName))
+                    continue;
+
+                TryDeleteDirectoryWithRetry(dir);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error pruning orphaned temp download directories.");
+        }
+    }
 
     public async Task<string> EnqueueAsync(DownloadJobRequest request, IProgress<DownloadProgressSnapshot>? progress = null, CancellationToken ct = default)
     {
@@ -135,6 +166,9 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
                 if (queued.Runtime.Cts.IsCancellationRequested)
                 {
                     MarkCancelledAndCleanup(queued.Runtime, outputFile: null);
+                    queued.Runtime.Completion.TrySetResult();
+                    _activeJobs.TryRemove(queued.Runtime.Request.JobId, out _);
+                    queued.Runtime.Cts.Dispose();
                     continue;
                 }
 
@@ -166,15 +200,21 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
     {
         var req = runtime.Request;
         var ct = runtime.Cts.Token;
+        var jobTempDir = Path.Combine(_paths.TempDownloadsDirectory, OutputPathGuard.SanitizeFileNameSegment(req.JobId, 48));
+        var preserveTempOnMoveFailure = false;
 
         try
         {
             Report(runtime, new DownloadProgressSnapshot(
                 req.JobId, DownloadJobState.Preparing, 0, true, null, req.SelectedQuality.EstimatedSizeBytes,
-                null, null, null, "Preparing engine & destination..."));
+                null, null, null, "Preparing engine & staging area..."));
+
+            _paths.EnsureDirectoriesExist();
+            Directory.CreateDirectory(jobTempDir);
 
             var toolchain = await _toolManager.EnsureToolsReadyAsync(ct: ct);
-            OutputPathGuard.EnsureSufficientDiskSpace(req.OutputDirectory, req.SelectedQuality.EstimatedSizeBytes);
+            OutputPathGuard.EnsureSufficientDiskSpaceForTempAndDestination(
+                jobTempDir, req.OutputDirectory, req.SelectedQuality.EstimatedSizeBytes);
 
             var targetExt = req.SelectedQuality.IsAudioOnly
                 ? (req.SelectedQuality.PreferredAudioExtension ?? req.OutputContainer)
@@ -188,11 +228,11 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
 
             if (isActiveLivestream)
             {
-                await ExecuteLivestreamJobAsync(runtime, toolchain, reservation, ct);
+                preserveTempOnMoveFailure = await ExecuteLivestreamJobAsync(runtime, toolchain, reservation, jobTempDir, ct);
             }
             else
             {
-                await ExecuteStandardVideoJobAsync(runtime, toolchain, reservation, ct);
+                preserveTempOnMoveFailure = await ExecuteStandardVideoJobAsync(runtime, toolchain, reservation, jobTempDir, ct);
             }
         }
         catch (OperationCanceledException)
@@ -206,16 +246,29 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
                 req.JobId, DownloadJobState.Failed, 0, false, null, null, null, null, null,
                 "Failed", ErrorMessage: ex.Message, TechnicalDetails: ex.ToString()));
         }
+        finally
+        {
+            if (!preserveTempOnMoveFailure)
+            {
+                TryDeleteDirectoryWithRetry(jobTempDir);
+            }
+        }
     }
 
-    private async Task ExecuteStandardVideoJobAsync(
+    private async Task<bool> ExecuteStandardVideoJobAsync(
         JobRuntimeState runtime,
         ResolvedToolchain toolchain,
         OutputPathReservation reservation,
+        string jobTempDir,
         CancellationToken ct)
     {
         var req = runtime.Request;
-        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(toolchain, req, reservation.ReservedBasePath);
+        var args = YtDlpArgumentBuilder.BuildStandardDownloadArguments(
+            toolchain,
+            req,
+            reservation.OutputDirectory,
+            jobTempDir,
+            reservation.RelativeBaseFileName);
 
         var streamIndex = 0;
         var lastStreamFinished = false;
@@ -236,9 +289,10 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
 
         if (result.WasCancelled || runtime.UserCancelled)
         {
-            CleanupPartialFiles(reservation.ReservedBasePath);
+            // Clean up jobTempDir BEFORE reporting Cancelled so disk state is already spotless.
+            TryDeleteDirectoryWithRetry(jobTempDir);
             MarkCancelledAndCleanup(runtime, outputFile: null);
-            return;
+            return false;
         }
 
         if (result.ExitCode != 0)
@@ -247,19 +301,47 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             Report(runtime, new DownloadProgressSnapshot(
                 req.JobId, DownloadJobState.Failed, 0, false, null, null, null, null, null,
                 "Failed", ErrorMessage: classified.UserMessage, TechnicalDetails: classified.TechnicalSummary));
-            return;
+            return false;
         }
 
-        var finalFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation);
-        var finalSize = finalFile is not null && File.Exists(finalFile) ? new FileInfo(finalFile).Length : 0;
+        var locatedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, jobTempDir, allowPartFallback: false);
+        if (string.IsNullOrWhiteSpace(locatedFile) || !File.Exists(locatedFile))
+        {
+            Report(runtime, new DownloadProgressSnapshot(
+                req.JobId, DownloadJobState.Failed, 0, false, null, null, null, null, null,
+                "Failed", ErrorMessage: "Download completed, but the output file could not be located."));
+            return false;
+        }
 
+        // Ensure final file resides in the user's Save folder (cross-volume safe if yt-dlp left it in temp)
+        string finalFile;
+        try
+        {
+            finalFile = await OutputPathGuard.MoveFileCrossVolumeSafeAsync(
+                locatedFile, reservation.OutputDirectory, Path.GetFileName(locatedFile), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to move completed file '{Src}' into '{Dest}'.", locatedFile, reservation.OutputDirectory);
+            Report(runtime, new DownloadProgressSnapshot(
+                req.JobId, DownloadJobState.Failed, 99, false, null, null, null, null, null,
+                "Failed to save output file",
+                ErrorMessage: $"Could not move finished download to '{reservation.OutputDirectory}': {ex.Message}",
+                TechnicalDetails: $"Temporary file preserved at: {locatedFile}"));
+            return true; // Preserve jobTempDir so user doesn't lose the downloaded file
+        }
+
+        var finalSize = File.Exists(finalFile) ? new FileInfo(finalFile).Length : 0;
         await PersistHistorySafeAsync(req, finalFile, finalSize);
+        TryDeleteDirectoryWithRetry(jobTempDir);
 
         Report(runtime, new DownloadProgressSnapshot(
             req.JobId, DownloadJobState.Completed, 100, false, finalSize > 0 ? finalSize : null,
             finalSize > 0 ? finalSize : null, null, TimeSpan.Zero,
             req.KnownDurationSeconds is > 0 ? TimeSpan.FromSeconds(req.KnownDurationSeconds.Value) : null,
             "Completed", OutputFilePath: finalFile, NonFatalNotice: latestNotice));
+
+        return false;
 
         void HandleStandardOutput(string line)
         {
@@ -327,10 +409,11 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         }
     }
 
-    private async Task ExecuteLivestreamJobAsync(
+    private async Task<bool> ExecuteLivestreamJobAsync(
         JobRuntimeState runtime,
         ResolvedToolchain toolchain,
         OutputPathReservation reservation,
+        string jobTempDir,
         CancellationToken ct)
     {
         var req = runtime.Request;
@@ -356,7 +439,9 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         var args = YtDlpArgumentBuilder.BuildLivestreamArguments(
             toolchain,
             req,
-            reservation.ReservedBasePath,
+            reservation.OutputDirectory,
+            jobTempDir,
+            reservation.RelativeBaseFileName,
             mode);
 
         var isCappedEstimate = req.LivestreamStartUtc.HasValue
@@ -401,17 +486,17 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             OnStandardError = line => HandleLiveLine(line)
         }, jobLinkedCts.Token);
 
-        // Locate finalized merged file; if separate unmerged .f* video+audio tracks remain after graceful stop,
-        // mux them cleanly with FFmpeg (-c copy -shortest) BEFORE falling back to single-track .part recovery.
-        var capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, allowPartFallback: false);
+        // Locate finalized merged file in Save folder or jobTempDir; if separate unmerged .f* video+audio
+        // tracks remain inside jobTempDir after stop/disconnect, mux them cleanly with FFmpeg (-c copy -shortest) FIRST.
+        var capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, jobTempDir, allowPartFallback: false);
         if (string.IsNullOrWhiteSpace(capturedFile))
         {
-            capturedFile = await TryManualMuxPartialTracksAsync(toolchain, reservation);
+            capturedFile = await TryManualMuxPartialTracksAsync(toolchain, reservation, jobTempDir);
         }
 
         if (string.IsNullOrWhiteSpace(capturedFile))
         {
-            capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, allowPartFallback: true);
+            capturedFile = ResolveFinalOutputFile(detectedFinalFile, lastDestination, reservation, jobTempDir, allowPartFallback: true);
         }
 
         var hasSavedRecording = !string.IsNullOrWhiteSpace(capturedFile)
@@ -423,38 +508,38 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             if (runtime.UserCancelled)
             {
                 MarkCancelledAndCleanup(runtime, outputFile: null);
-                return;
+                return false;
             }
 
             var classified = YtDlpErrorClassifier.Classify(result.StandardError, result.ExitCode);
             Report(runtime, new DownloadProgressSnapshot(
                 req.JobId, DownloadJobState.Failed, 0, false, lastDownloadedBytes, null, null, null, lastRecordedDuration,
                 "Recording failed", ErrorMessage: classified.UserMessage, TechnicalDetails: classified.TechnicalSummary));
-            return;
+            return false;
         }
 
-        // Remux crash-safe MKV/TS -> MP4 with +faststart if user requested MP4
-        var finalOutputPath = capturedFile!;
+        // Remux crash-safe MKV/TS -> MP4 (+faststart) INSIDE jobTempDir so user Save folder never sees intermediate files
+        var workingOutputPath = capturedFile!;
         if (req.OutputContainer.Equals("mp4", StringComparison.OrdinalIgnoreCase)
-            && !finalOutputPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+            && !workingOutputPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
         {
             Report(runtime, new DownloadProgressSnapshot(
                 req.JobId, DownloadJobState.Finalizing, 98, true, lastDownloadedBytes, null, null, null, lastRecordedDuration,
                 "Finalizing MP4 container (faststart)...", NonFatalNotice: latestNotice));
 
-            var targetMp4 = Path.ChangeExtension(finalOutputPath, ".mp4");
+            var tempTargetMp4 = Path.Combine(jobTempDir, $"{reservation.RelativeBaseFileName}.mp4");
             var remuxRes = await _processRunner.RunAsync(new ProcessRunRequest
             {
                 ExecutablePath = toolchain.FFmpegPath,
-                Arguments = YtDlpArgumentBuilder.BuildRemuxToMp4Arguments(finalOutputPath, targetMp4),
+                Arguments = YtDlpArgumentBuilder.BuildRemuxToMp4Arguments(workingOutputPath, tempTargetMp4),
                 GracefulStop = GracefulStopStrategy.StdinQuitThenCtrlC,
                 GracefulStopTimeout = TimeSpan.FromSeconds(5)
             }, CancellationToken.None);
 
-            if (remuxRes.ExitCode == 0 && File.Exists(targetMp4) && new FileInfo(targetMp4).Length > 0)
+            if (remuxRes.ExitCode == 0 && File.Exists(tempTargetMp4) && new FileInfo(tempTargetMp4).Length > 0)
             {
-                try { File.Delete(finalOutputPath); } catch { }
-                finalOutputPath = targetMp4;
+                try { File.Delete(workingOutputPath); } catch { }
+                workingOutputPath = tempTargetMp4;
             }
             else
             {
@@ -462,8 +547,32 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             }
         }
 
+        // Move finalized playable recording safely from jobTempDir into user's Save folder (cross-volume safe)
+        var finalExtension = Path.GetExtension(workingOutputPath);
+        if (string.IsNullOrWhiteSpace(finalExtension))
+            finalExtension = ".mkv";
+        var preferredFinalName = $"{reservation.RelativeBaseFileName}{finalExtension}";
+
+        string finalOutputPath;
+        try
+        {
+            finalOutputPath = await OutputPathGuard.MoveFileCrossVolumeSafeAsync(
+                workingOutputPath, reservation.OutputDirectory, preferredFinalName, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to move finalized livestream recording '{Src}' into '{Dest}'.", workingOutputPath, reservation.OutputDirectory);
+            Report(runtime, new DownloadProgressSnapshot(
+                req.JobId, DownloadJobState.Failed, 99, false, lastDownloadedBytes, null, null, null, lastRecordedDuration,
+                "Failed to move recording",
+                ErrorMessage: $"Recording finished, but moving it to '{reservation.OutputDirectory}' failed: {ex.Message}",
+                TechnicalDetails: $"Recording preserved safely at: {workingOutputPath}"));
+            return true; // Preserve jobTempDir so the recording is NEVER lost!
+        }
+
         var finalSize = new FileInfo(finalOutputPath).Length;
         await PersistHistorySafeAsync(req, finalOutputPath, finalSize);
+        TryDeleteDirectoryWithRetry(jobTempDir);
 
         var completionLabel = runtime.UserCancelled
             ? "Recording stopped & saved"
@@ -474,6 +583,8 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         Report(runtime, new DownloadProgressSnapshot(
             req.JobId, DownloadJobState.Completed, 100, false, finalSize, finalSize, null, TimeSpan.Zero,
             lastRecordedDuration, completionLabel, OutputFilePath: finalOutputPath, NonFatalNotice: latestNotice));
+
+        return false;
 
         void HandleLiveLine(string line)
         {
@@ -594,42 +705,43 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         }
     }
 
-    private async Task<string?> TryManualMuxPartialTracksAsync(ResolvedToolchain toolchain, OutputPathReservation reservation)
+    private async Task<string?> TryManualMuxPartialTracksAsync(
+        ResolvedToolchain toolchain,
+        OutputPathReservation reservation,
+        string jobTempDir)
     {
         try
         {
-            var dir = Path.GetDirectoryName(reservation.ReservedBasePath);
-            var baseName = Path.GetFileName(reservation.ReservedBasePath);
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-                return null;
+            var baseName = reservation.RelativeBaseFileName;
+            var searchDirs = new[] { jobTempDir, reservation.OutputDirectory }
+                .Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
 
-            var parts = Directory.EnumerateFiles(dir, $"{baseName}.f*")
-                .Where(f => !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
-                            && !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase)
-                            && new FileInfo(f).Length > 0)
-                .OrderByDescending(f => new FileInfo(f).Length)
-                .ToList();
-
-            if (parts.Count < 2)
-                return null;
-
-            var outputMkv = $"{reservation.ReservedBasePath}.mkv";
-            var res = await _processRunner.RunAsync(new ProcessRunRequest
+            foreach (var dir in searchDirs)
             {
-                ExecutablePath = toolchain.FFmpegPath,
-                Arguments = YtDlpArgumentBuilder.BuildManualMuxFallbackArguments(parts[0], parts[1], outputMkv),
-                GracefulStop = GracefulStopStrategy.StdinQuitThenCtrlC,
-                GracefulStopTimeout = TimeSpan.FromSeconds(5)
-            }, CancellationToken.None);
+                var parts = Directory.EnumerateFiles(dir, $"{baseName}.f*")
+                    .Where(f => !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
+                                && !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase)
+                                && new FileInfo(f).Length > 0)
+                    .OrderByDescending(f => new FileInfo(f).Length)
+                    .ToList();
 
-            if (res.ExitCode == 0 && File.Exists(outputMkv) && new FileInfo(outputMkv).Length > 0)
-            {
-                foreach (var f in Directory.EnumerateFiles(dir, $"{baseName}.f*"))
+                if (parts.Count < 2)
+                    continue;
+
+                var outputMkv = Path.Combine(jobTempDir, $"{baseName}.mkv");
+                var res = await _processRunner.RunAsync(new ProcessRunRequest
                 {
-                    try { File.Delete(f); } catch { }
-                }
+                    ExecutablePath = toolchain.FFmpegPath,
+                    Arguments = YtDlpArgumentBuilder.BuildManualMuxFallbackArguments(parts[0], parts[1], outputMkv),
+                    GracefulStop = GracefulStopStrategy.StdinQuitThenCtrlC,
+                    GracefulStopTimeout = TimeSpan.FromSeconds(5)
+                }, CancellationToken.None);
 
-                return outputMkv;
+                if (res.ExitCode == 0 && File.Exists(outputMkv) && new FileInfo(outputMkv).Length > 0)
+                {
+                    return outputMkv;
+                }
             }
         }
         catch (Exception ex)
@@ -650,7 +762,6 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         if (elapsed <= TimeSpan.Zero)
             return null;
 
-        // Clamp to YouTube's practical ~120-hour DASH DVR cap
         var maxDvrWindow = TimeSpan.FromHours(120);
         var availableHistory = elapsed > maxDvrWindow ? maxDvrWindow : elapsed;
         var margin = TimeSpan.FromSeconds(Math.Clamp(liveEdgeMarginSeconds, 15, 300));
@@ -659,36 +770,51 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         return target >= TimeSpan.FromSeconds(15) ? target : null;
     }
 
-    private static string? ResolveFinalOutputFile(string? printedFinal, string? lastDestination, OutputPathReservation reservation, bool allowPartFallback = true)
+    private static string? ResolveFinalOutputFile(
+        string? printedFinal,
+        string? lastDestination,
+        OutputPathReservation reservation,
+        string jobTempDir,
+        bool allowPartFallback)
     {
         if (!string.IsNullOrWhiteSpace(printedFinal) && File.Exists(printedFinal))
             return printedFinal;
 
-        if (!string.IsNullOrWhiteSpace(lastDestination) && File.Exists(lastDestination))
+        if (!string.IsNullOrWhiteSpace(lastDestination)
+            && File.Exists(lastDestination)
+            && !IsSplitFormatTrackFile(Path.GetFileName(lastDestination), reservation.RelativeBaseFileName))
+        {
             return lastDestination;
+        }
 
         if (File.Exists(reservation.TargetFilePath))
             return reservation.TargetFilePath;
 
-        // Check common finalized/crash-safe extensions matching our reserved base path (excluding .f<id> split tracks)
-        var dir = Path.GetDirectoryName(reservation.ReservedBasePath);
-        var baseName = Path.GetFileName(reservation.ReservedBasePath);
-        if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+        var baseName = reservation.RelativeBaseFileName;
+        var searchDirs = new[] { reservation.OutputDirectory, jobTempDir }
+            .Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var dir in searchDirs)
         {
             var candidates = Directory.EnumerateFiles(dir, $"{baseName}.*")
                 .Where(f => !f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
                             && !f.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
+                            && !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase)
                             && !IsSplitFormatTrackFile(Path.GetFileName(f), baseName))
                 .OrderByDescending(f => new FileInfo(f).Length)
                 .ToList();
 
             if (candidates.Count > 0)
                 return candidates[0];
+        }
 
-            if (!allowPartFallback)
-                return null;
+        if (!allowPartFallback)
+            return null;
 
-            // For gracefully interrupted single-stream live MPEG-TS captures, promote .part if valid
+        foreach (var dir in searchDirs)
+        {
             var partFile = Directory.EnumerateFiles(dir, $"{baseName}.*.part")
                 .Where(f => !f.Contains("-Frag", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(f => new FileInfo(f).Length)
@@ -696,11 +822,11 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
 
             if (!string.IsNullOrWhiteSpace(partFile) && new FileInfo(partFile).Length > 0)
             {
-                var finalizedPath = partFile[..^5]; // strip ".part"
+                var promotedPath = partFile[..^5]; // strip ".part"
                 try
                 {
-                    File.Move(partFile, finalizedPath, overwrite: true);
-                    return finalizedPath;
+                    File.Move(partFile, promotedPath, overwrite: true);
+                    return promotedPath;
                 }
                 catch
                 {
@@ -721,28 +847,30 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         return afterF < fileName.Length && char.IsDigit(fileName[afterF]);
     }
 
-    private static void CleanupPartialFiles(string reservedBasePath)
+    private static void TryDeleteDirectoryWithRetry(string path)
     {
-        try
-        {
-            var dir = Path.GetDirectoryName(reservedBasePath);
-            var baseName = Path.GetFileName(reservedBasePath);
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-                return;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return;
 
-            foreach (var file in Directory.EnumerateFiles(dir, $"{baseName}.*"))
-            {
-                if (file.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
-                    || file.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
-                    || file.Contains(".f", StringComparison.OrdinalIgnoreCase))
-                {
-                    try { File.Delete(file); } catch { }
-                }
-            }
-        }
-        catch
+        for (var attempt = 0; attempt < 4; attempt++)
         {
-            // Best-effort cleanup of cancelled VOD temp files.
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 3)
+            {
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch (UnauthorizedAccessException) when (attempt < 3)
+            {
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch
+            {
+                return;
+            }
         }
     }
 

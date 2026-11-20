@@ -8,8 +8,12 @@ public static class YtDlpArgumentBuilder
     public static IReadOnlyList<string> BuildStandardDownloadArguments(
         ResolvedToolchain toolchain,
         DownloadJobRequest request,
-        string reservedBaseOutputPath)
+        string finalSaveDirectory,
+        string jobTempDirectory,
+        string relativeBaseFileName)
     {
+        ValidateRelativeTemplateName(relativeBaseFileName);
+
         var args = new List<string>();
         AddCommonEngineArguments(args, toolchain);
 
@@ -41,11 +45,8 @@ public static class YtDlpArgumentBuilder
             }
         }
 
-        // Deterministic output path based on our OutputPathGuard reservation
-        args.Add("-o");
-        args.Add($"{reservedBaseOutputPath}.%(ext)s");
-        args.Add("--windows-filenames");
-        args.Add("--no-playlist");
+        // CRITICAL yt-dlp rule: -P home/temp only take effect when -o is a RELATIVE filename template.
+        AddIsolatedPathsAndOutputArguments(args, finalSaveDirectory, jobTempDirectory, relativeBaseFileName);
 
         // Network stability & retry policy
         args.Add("--retries");
@@ -71,9 +72,13 @@ public static class YtDlpArgumentBuilder
     public static IReadOnlyList<string> BuildLivestreamArguments(
         ResolvedToolchain toolchain,
         DownloadJobRequest request,
-        string reservedBaseOutputPath,
+        string finalSaveDirectory,
+        string jobTempDirectory,
+        string relativeBaseFileName,
         LivestreamRecordingMode mode)
     {
+        ValidateRelativeTemplateName(relativeBaseFileName);
+
         var args = new List<string>();
         AddCommonEngineArguments(args, toolchain);
 
@@ -88,26 +93,23 @@ public static class YtDlpArgumentBuilder
 
             case LivestreamRecordingMode.RecordFromStartUntilEnd:
             case LivestreamRecordingMode.RecordFromStartToLiveEdge:
-                // Empirically verified on YouTube 2026: --live-from-start serves separate concurrent DASH
-                // streams (http_dash_segments_generator) where yt-dlp ignores --downloader ffmpeg -t and
-                // rejects --download-sections. Mode C is cleanly stopped near the live edge by
-                // ModeCLiveEdgeWatchdog sending CTRL_C_EVENT once both tracks pass the target segment,
-                // triggering yt-dlp's built-in FFmpeg merge and clean exit (code 0).
                 args.Add("--live-from-start");
                 args.Add("--concurrent-fragments");
                 args.Add("4");
                 break;
         }
 
-        // Crash-safe live capture containers (remuxed to MP4 with +faststart after finalization if requested)
+        // Crash-safe live capture containers; all fragments and intermediate parts stay inside jobTempDirectory
         args.Add("--hls-use-mpegts");
         args.Add("--merge-output-format");
         args.Add("mkv");
 
-        args.Add("-o");
-        args.Add($"{reservedBaseOutputPath}.%(ext)s");
-        args.Add("--windows-filenames");
-        args.Add("--no-playlist");
+        // When user requests MP4 for a livestream, stage the final yt-dlp MKV inside jobTempDirectory first
+        // so we can remux MKV -> MP4 (+faststart) in temp before moving ONLY the final MP4 to finalSaveDirectory.
+        var ytDlpHomeDir = request.OutputContainer.Equals("mp4", StringComparison.OrdinalIgnoreCase)
+            ? jobTempDirectory
+            : finalSaveDirectory;
+        AddIsolatedPathsAndOutputArguments(args, ytDlpHomeDir, jobTempDirectory, relativeBaseFileName);
 
         // Aggressive live resilience for transient drops/reconnects
         args.Add("--retries");
@@ -176,6 +178,35 @@ public static class YtDlpArgumentBuilder
         }
 
         return quality.FormatSelector;
+    }
+
+    private static void AddIsolatedPathsAndOutputArguments(
+        List<string> args,
+        string homeDirectory,
+        string tempDirectory,
+        string relativeBaseFileName)
+    {
+        args.Add("-P");
+        args.Add($"home:{Path.GetFullPath(homeDirectory)}");
+        args.Add("-P");
+        args.Add($"temp:{Path.GetFullPath(tempDirectory)}");
+        args.Add("-o");
+        args.Add($"{relativeBaseFileName}.%(ext)s");
+        args.Add("--windows-filenames");
+        args.Add("--no-playlist");
+    }
+
+    private static void ValidateRelativeTemplateName(string relativeBaseFileName)
+    {
+        if (string.IsNullOrWhiteSpace(relativeBaseFileName)
+            || Path.IsPathRooted(relativeBaseFileName)
+            || relativeBaseFileName.Contains(Path.DirectorySeparatorChar)
+            || relativeBaseFileName.Contains(Path.AltDirectorySeparatorChar))
+        {
+            throw new ArgumentException(
+                "Output filename template must be a relative filename (without directories) so yt-dlp honors -P home/temp.",
+                nameof(relativeBaseFileName));
+        }
     }
 
     private static void AddCommonEngineArguments(List<string> args, ResolvedToolchain toolchain)
