@@ -46,22 +46,19 @@ public partial class App : Application
     {
         _logger?.LogInformation("YTDownloadTool shutting down.");
 
-        if (_serviceProvider is not null)
+        if (_serviceProvider is { } provider)
         {
+            _serviceProvider = null;
             try
             {
-                if (_serviceProvider.GetService<IDownloadOrchestrator>() is { } orchestrator)
-                {
-                    orchestrator.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(8));
-                }
+                // Dispose container asynchronously on a thread-pool thread with bounded timeout
+                // to support IAsyncDisposable services cleanly without deadlocking the WPF Dispatcher.
+                Task.Run(() => provider.DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(10));
             }
-            catch
+            catch (Exception ex)
             {
-                // Best-effort graceful shutdown.
+                _logger?.LogWarning(ex, "Error while disposing service provider during shutdown.");
             }
-
-            _serviceProvider.Dispose();
-            _serviceProvider = null;
         }
 
         base.OnExit(e);

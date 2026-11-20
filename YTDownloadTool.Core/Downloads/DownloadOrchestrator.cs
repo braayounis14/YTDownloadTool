@@ -9,7 +9,7 @@ using YTDownloadTool.Core.Tools;
 
 namespace YTDownloadTool.Core.Downloads;
 
-public interface IDownloadOrchestrator : IAsyncDisposable
+public interface IDownloadOrchestrator : IAsyncDisposable, IDisposable
 {
     int ActiveJobCount { get; }
     void PruneOrphanedTempDirectories();
@@ -148,7 +148,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         {
             try
             {
-                await Task.WhenAll(waitTasks).WaitAsync(timeout ?? TimeSpan.FromSeconds(12));
+                await Task.WhenAll(waitTasks).WaitAsync(timeout ?? TimeSpan.FromSeconds(12)).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
@@ -930,18 +930,33 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             ? $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}"
             : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
 
+    public void Dispose()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
+
+        try
+        {
+            Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(8));
+        }
+        catch
+        {
+            // Ensure shutdown cancellation never throws during synchronous container teardown.
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
         _queue.Writer.TryComplete();
-        await CancelAllAsync(TimeSpan.FromSeconds(10));
-        await _shutdownCts.CancelAsync();
+        await CancelAllAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+        await _shutdownCts.CancelAsync().ConfigureAwait(false);
 
         try
         {
-            await _dispatcherTask.WaitAsync(TimeSpan.FromSeconds(3));
+            await _dispatcherTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         }
         catch
         {

@@ -1,6 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using YTDownloadTool.Core.Downloads;
+using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
@@ -339,6 +342,54 @@ public sealed class DownloadOrchestratorTests : IDisposable
         Assert.Contains($"home:{Path.GetFullPath(_outDir)}", args);
         Assert.Contains($"temp:{Path.GetFullPath(jobTemp)}", args);
         Assert.Equal("Song [dQw4w9WgXcQ].%(ext)s", args[args.ToList().IndexOf("-o") + 1]);
+    }
+
+    [Fact]
+    public async Task ServiceProvider_WithDownloadOrchestrator_DisposesCleanlyBothAsyncAndSync()
+    {
+        ServiceProvider BuildRealProvider()
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton<IAppPaths>(_paths);
+            services.AddLogging(b =>
+            {
+                b.ClearProviders();
+                b.AddProvider(new RollingFileLoggerProvider(_paths.LogsDirectory, LogLevel.Information));
+            });
+            services.AddSingleton(_ => new HttpClient());
+            services.AddSingleton<IProcessRunner, SafeProcessRunner>();
+            services.AddSingleton<ISettingsStore, SettingsStore>();
+            services.AddSingleton<IHistoryStore, HistoryStore>();
+            services.AddSingleton<IToolManager, ToolManager>();
+            services.AddSingleton<OutputPathGuard>();
+            services.AddSingleton<IMediaProbeService, MediaProbeService>();
+            services.AddSingleton<IDownloadOrchestrator, DownloadOrchestrator>();
+            return services.BuildServiceProvider();
+        }
+
+        // 1. Async container disposal (App.OnExit primary path)
+        await using (var asyncProvider = BuildRealProvider())
+        {
+            var orch1 = asyncProvider.GetRequiredService<IDownloadOrchestrator>();
+            Assert.NotNull(orch1);
+            await asyncProvider.DisposeAsync();
+        }
+
+        // 2. Synchronous container disposal (must NEVER throw InvalidOperationException for IAsyncDisposable-only)
+        using (var syncProvider = BuildRealProvider())
+        {
+            var orch2 = syncProvider.GetRequiredService<IDownloadOrchestrator>();
+            Assert.NotNull(orch2);
+            var ex = Record.Exception(() => syncProvider.Dispose());
+            Assert.Null(ex);
+        }
+
+        // 3. Idempotent double disposal on orchestrator directly (DisposeAsync + Dispose)
+        using var provider3 = BuildRealProvider();
+        var orch3 = provider3.GetRequiredService<IDownloadOrchestrator>();
+        await orch3.DisposeAsync();
+        var doubleDisposeEx = Record.Exception(() => orch3.Dispose());
+        Assert.Null(doubleDisposeEx);
     }
 
     private static string ExtractPrefixedArg(List<string> args, string prefix)
