@@ -1,0 +1,70 @@
+YTDownloadTool — Third-Party Software & Open-Source License Notices
+====================================================================
+
+YTDownloadTool bundles and automatically manages external command-line multimedia
+utilities invoked out-of-process as standalone executables. YTDownloadTool does not
+claim copyright over any third-party component listed below.
+
+--------------------------------------------------------------------
+1. FFmpeg & FFprobe (yt-dlp/FFmpeg-Builds, GPL-shared)
+--------------------------------------------------------------------
+Project: https://ffmpeg.org/
+Build Source: https://github.com/yt-dlp/FFmpeg-Builds
+License: GNU General Public License version 3 (GPLv3)
+
+This software uses executable binaries of FFmpeg (ffmpeg.exe, ffprobe.exe, and
+supporting shared libraries) from the FFmpeg project built via yt-dlp/FFmpeg-Builds,
+licensed under the GNU General Public License v3.0 (GPLv3).
+
+The full GPLv3 license text is distributed alongside the FFmpeg binaries in
+LICENSE.txt (inside the application's BaselineTools\ffmpeg and managed Tools\ffmpeg
+directories) and is also available at https://www.gnu.org/licenses/gpl-3.0.html.
+
+Corresponding Source Code & Build Provenance (GPLv3 Section 6):
+- Exact upstream FFmpeg source code, yt-dlp patches, and build scripts for every
+  released version are published at:
+  * https://github.com/yt-dlp/FFmpeg-Builds
+  * https://github.com/FFmpeg/FFmpeg
+  * And archived/referenced alongside YTDownloadTool releases at:
+    https://github.com/braayounis14/YTDownloadTool/releases
+
+Note: FFmpeg is invoked strictly as an external standalone command-line utility
+(separate process) and is not linked into YTDownloadTool assemblies.
+
+--------------------------------------------------------------------
+2. yt-dlp
+--------------------------------------------------------------------
+Project: https://github.com/yt-dlp/yt-dlp
+License: The Unlicense (Public Domain)
+
+yt-dlp is released into the public domain under The Unlicense.
+See: https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+
+--------------------------------------------------------------------
+3. Deno JavaScript Runtime
+--------------------------------------------------------------------
+Project: https://github.com/denoland/deno
+License: MIT License
+Copyright (c) 2018-present the Deno authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in the
+Software without restriction, including without limitation the rights to use, copy,
+modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+--------------------------------------------------------------------
+4. .NET & Application NuGet Libraries
+--------------------------------------------------------------------
+- .NET Runtime & WPF (Microsoft) — MIT License
+- CommunityToolkit.Mvvm (.NET Foundation) — MIT License
+- Microsoft.Extensions.DependencyInjection & Logging — MIT License
+- Velopack (https://velopack.io / https://github.com/velopack/velopack) — MIT License
