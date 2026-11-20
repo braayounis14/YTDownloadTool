@@ -47,6 +47,15 @@ public sealed class ToolManagerTests : IDisposable
         Assert.Equal(hash2, ChecksumVerifier.ParseExpectedSha256(multi, "ffmpeg-master-latest-win64-gpl-shared.zip"));
         Assert.Null(ChecksumVerifier.ParseExpectedSha256(multi, "missing.exe"));
         Assert.Equal(hash1, ChecksumVerifier.ParseExpectedSha256(hash1 + "\n", "deno-x86_64-pc-windows-msvc.zip"));
+
+        // Deno Windows PowerShell Format-List .sha256sum format
+        var denoFormat = $"""
+            Algorithm : SHA256
+            Hash      : {hash2.ToUpperInvariant()}
+            Path      : C:\a\deno\deno\target\release\deno-x86_64-pc-windows-msvc.zip
+            """;
+        Assert.Equal(hash2, ChecksumVerifier.ParseExpectedSha256(denoFormat, "deno-x86_64-pc-windows-msvc.zip"));
+        Assert.Null(ChecksumVerifier.ParseExpectedSha256(denoFormat, "other-file.zip"));
     }
 
     [Fact]

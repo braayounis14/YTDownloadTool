@@ -35,7 +35,38 @@ public static class ChecksumVerifier
             }
         }
 
-        // Single-entry checksum file containing only the hash (common for *.zip.sha256sum).
+        // PowerShell Format-List output (used by denoland/deno Windows *.sha256sum assets):
+        //   Algorithm : SHA256
+        //   Hash      : <64-HEX>
+        //   Path      : C:\...\deno-x86_64-pc-windows-msvc.zip
+        string? psHash = null;
+        string? psPath = null;
+        foreach (var line in lines)
+        {
+            var colonIdx = line.IndexOf(':');
+            if (colonIdx <= 0)
+                continue;
+
+            var key = line[..colonIdx].Trim();
+            var val = line[(colonIdx + 1)..].Trim();
+            if (key.Equals("Hash", StringComparison.OrdinalIgnoreCase) && IsValidSha256Hex(val))
+            {
+                psHash = val.ToLowerInvariant();
+            }
+            else if (key.Equals("Path", StringComparison.OrdinalIgnoreCase))
+            {
+                psPath = val;
+            }
+        }
+
+        if (psHash is not null &&
+            (string.IsNullOrWhiteSpace(psPath)
+             || Path.GetFileName(psPath).Equals(expectedFileName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return psHash;
+        }
+
+        // Single-entry checksum file containing only the hash (common for standalone *.sha256sum).
         if (lines.Length == 1 && IsValidSha256Hex(lines[0]))
         {
             return lines[0].ToLowerInvariant();
