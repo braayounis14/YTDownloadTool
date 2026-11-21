@@ -16,34 +16,57 @@ public sealed class MediaProbeService : IMediaProbeService
     private readonly IToolManager _toolManager;
     private readonly IProcessRunner _processRunner;
     private readonly ILogger<MediaProbeService> _logger;
+    private readonly TimeSpan _probeTimeout;
 
     public MediaProbeService(
         IToolManager toolManager,
         IProcessRunner processRunner,
-        ILogger<MediaProbeService> logger)
+        ILogger<MediaProbeService> logger,
+        TimeSpan? probeTimeout = null)
     {
         _toolManager = toolManager;
         _processRunner = processRunner;
         _logger = logger;
+        _probeTimeout = probeTimeout ?? TimeSpan.FromSeconds(30);
     }
 
     public async Task<MediaProbeResult> ProbeAsync(string rawUrl, CancellationToken ct = default)
     {
         var validation = YouTubeUrlValidator.Validate(rawUrl);
         if (!validation.IsValid || string.IsNullOrWhiteSpace(validation.NormalizedUrl))
-            throw new ArgumentException(validation.ErrorMessage ?? "Invalid YouTube URL.", nameof(rawUrl));
+            throw new ArgumentException(validation.ErrorMessage ?? "Invalid URL.", nameof(rawUrl));
 
         var toolchain = await _toolManager.EnsureToolsReadyAsync(ct: ct);
 
         _logger.LogInformation("Probing media metadata for {Url}", validation.NormalizedUrl);
 
         var primaryArgs = BuildProbeArguments(toolchain, validation.NormalizedUrl, liveFromStart: false);
-        var primaryResult = await _processRunner.RunAsync(new ProcessRunRequest
+        ProcessRunResult primaryResult;
+        using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            ExecutablePath = toolchain.YtDlpPath,
-            Arguments = primaryArgs,
-            GracefulStop = GracefulStopStrategy.KillImmediate
-        }, ct);
+            timeoutCts.CancelAfter(_probeTimeout);
+            try
+            {
+                primaryResult = await _processRunner.RunAsync(new ProcessRunRequest
+                {
+                    ExecutablePath = toolchain.YtDlpPath,
+                    Arguments = primaryArgs,
+                    GracefulStop = GracefulStopStrategy.KillImmediate
+                }, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning("Media probe timed out after {Seconds:F0}s.", _probeTimeout.TotalSeconds);
+                throw new InvalidOperationException(
+                    "Timed out while reaching the media server. Check your internet connection and try again.");
+            }
+        }
+
+        if (primaryResult.WasCancelled && !ct.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                "Timed out while reaching the media server. Check your internet connection and try again.");
+        }
 
         if (primaryResult.ExitCode != 0 || string.IsNullOrWhiteSpace(primaryResult.StandardOutput))
         {
@@ -80,12 +103,14 @@ public sealed class MediaProbeService : IMediaProbeService
         try
         {
             var fromStartArgs = BuildProbeArguments(toolchain, liveProbe.CanonicalUrl, liveFromStart: true);
+            using var dvrTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            dvrTimeoutCts.CancelAfter(_probeTimeout);
             var res = await _processRunner.RunAsync(new ProcessRunRequest
             {
                 ExecutablePath = toolchain.YtDlpPath,
                 Arguments = fromStartArgs,
                 GracefulStop = GracefulStopStrategy.KillImmediate
-            }, ct);
+            }, dvrTimeoutCts.Token);
 
             var warnings = ExtractWarnings(res.StandardError);
             var stdErrLower = (res.StandardError ?? string.Empty).ToLowerInvariant();

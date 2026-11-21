@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Paths;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
 
@@ -35,6 +36,7 @@ public sealed class ToolManager : IToolManager
     private readonly IProcessRunner _processRunner;
     private readonly HttpClient _httpClient;
     private readonly ILogger<ToolManager> _logger;
+    private readonly IDistributionProfile _distributionProfile;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
     private readonly Dictionary<ToolKind, ToolUpdateCheckResult> _lastChecks = new();
@@ -44,13 +46,15 @@ public sealed class ToolManager : IToolManager
         ISettingsStore settingsStore,
         IProcessRunner processRunner,
         HttpClient httpClient,
-        ILogger<ToolManager> logger)
+        ILogger<ToolManager> logger,
+        IDistributionProfile? distributionProfile = null)
     {
         _paths = paths;
         _settingsStore = settingsStore;
         _processRunner = processRunner;
         _httpClient = httpClient;
         _logger = logger;
+        _distributionProfile = distributionProfile ?? DistributionProfile.Current;
     }
 
     public async Task<ResolvedToolchain> EnsureToolsReadyAsync(IProgress<string>? status = null, CancellationToken ct = default)
@@ -59,6 +63,12 @@ public sealed class ToolManager : IToolManager
         try
         {
             _paths.EnsureDirectoriesExist();
+
+            if (_distributionProfile.IsStoreManaged)
+            {
+                return await ResolveStoreBundledToolchainInternalAsync(status, ct);
+            }
+
             var manifest = await LoadManifestInternalAsync(ct);
             var resolvedPaths = new Dictionary<ToolKind, (string ExePath, string Version)>();
 
@@ -132,6 +142,17 @@ public sealed class ToolManager : IToolManager
         try
         {
             _paths.EnsureDirectoriesExist();
+            if (_distributionProfile.IsStoreManaged)
+            {
+                var storeStatuses = new List<ToolStatusInfo>(AllTools.Length);
+                foreach (var kind in AllTools)
+                {
+                    storeStatuses.Add(await BuildStoreStatusInfoInternalAsync(kind, ct));
+                }
+
+                return storeStatuses;
+            }
+
             var manifest = await LoadManifestInternalAsync(ct);
             var statuses = new List<ToolStatusInfo>(AllTools.Length);
 
@@ -154,6 +175,11 @@ public sealed class ToolManager : IToolManager
         try
         {
             _paths.EnsureDirectoriesExist();
+            if (_distributionProfile.IsStoreManaged)
+            {
+                return await BuildStoreManagedUpdateCheckAsync(kind, ct);
+            }
+
             var manifest = await LoadManifestInternalAsync(ct);
             return await CheckForUpdateInternalAsync(manifest, kind, force, ct);
         }
@@ -169,6 +195,17 @@ public sealed class ToolManager : IToolManager
         try
         {
             _paths.EnsureDirectoriesExist();
+            if (_distributionProfile.IsStoreManaged)
+            {
+                var storeResults = new List<ToolUpdateCheckResult>(AllTools.Length);
+                foreach (var kind in AllTools)
+                {
+                    storeResults.Add(await BuildStoreManagedUpdateCheckAsync(kind, ct));
+                }
+
+                return storeResults;
+            }
+
             var manifest = await LoadManifestInternalAsync(ct);
             var results = new List<ToolUpdateCheckResult>(AllTools.Length);
 
@@ -196,6 +233,12 @@ public sealed class ToolManager : IToolManager
 
     public async Task<ToolStatusInfo> UpdateToolAsync(ToolKind kind, IProgress<double>? progress = null, CancellationToken ct = default)
     {
+        if (_distributionProfile.IsStoreManaged)
+        {
+            throw new NotSupportedException(
+                "Multimedia engine updates are packaged and delivered automatically via Microsoft Store updates.");
+        }
+
         await _lifecycleLock.WaitAsync(ct);
         try
         {
@@ -213,6 +256,12 @@ public sealed class ToolManager : IToolManager
 
     public async Task<ToolStatusInfo> RollbackToolAsync(ToolKind kind, CancellationToken ct = default)
     {
+        if (_distributionProfile.IsStoreManaged)
+        {
+            throw new NotSupportedException(
+                "Multimedia engine versions are managed automatically by Microsoft Store updates.");
+        }
+
         await _lifecycleLock.WaitAsync(ct);
         try
         {
@@ -246,6 +295,12 @@ public sealed class ToolManager : IToolManager
         try
         {
             _paths.EnsureDirectoriesExist();
+            if (_distributionProfile.IsStoreManaged)
+            {
+                // Store compliance (Policies 10.2.2 & 10.2.3): never download binaries at runtime; re-verify bundled baseline only.
+                return await BuildStoreStatusInfoInternalAsync(kind, ct);
+            }
+
             var manifest = await LoadManifestInternalAsync(ct);
 
             var seeded = await TrySeedFromBaselineInternalAsync(manifest, kind, ct);
@@ -267,6 +322,104 @@ public sealed class ToolManager : IToolManager
 
     private ToolSourceDefinition GetSourceDefinition(ToolKind kind) =>
         ToolSources.GetDefinition(kind, _settingsStore.Current.YtDlpChannel);
+
+    private async Task<ResolvedToolchain> ResolveStoreBundledToolchainInternalAsync(IProgress<string>? status, CancellationToken ct)
+    {
+        var resolvedPaths = new Dictionary<ToolKind, (string ExePath, string Version)>();
+
+        foreach (var kind in AllTools)
+        {
+            var def = GetSourceDefinition(kind);
+            status?.Report($"Verifying bundled {def.DisplayName}...");
+
+            var baselineDir = Path.Combine(_paths.BaselineToolsDirectory, GetToolFolderName(kind));
+            var probed = Directory.Exists(baselineDir)
+                ? await ProbeToolDirectoryAsync(kind, baselineDir, ct)
+                : null;
+
+            if (probed is null)
+            {
+                _logger.LogError("Bundled Store tool {Tool} failed verification inside BaselineTools.", kind);
+                throw new InvalidOperationException(
+                    $"Bundled {def.DisplayName} could not be verified inside the application package. " +
+                    "Repair or reinstall Tidejar from Microsoft Store or Windows Settings → Installed apps.");
+            }
+
+            resolvedPaths[kind] = probed.Value;
+        }
+
+        var ffmpegExe = resolvedPaths[ToolKind.FFmpeg].ExePath;
+        var ffmpegDir = Path.GetDirectoryName(ffmpegExe) ?? throw new InvalidOperationException("Invalid bundled FFmpeg path.");
+        var ffprobeExe = Path.Combine(ffmpegDir, "ffprobe.exe");
+
+        status?.Report("Download engine ready.");
+
+        return new ResolvedToolchain(
+            YtDlpPath: resolvedPaths[ToolKind.YtDlp].ExePath,
+            FFmpegDirectory: ffmpegDir,
+            FFmpegPath: ffmpegExe,
+            FFprobePath: ffprobeExe,
+            DenoPath: resolvedPaths[ToolKind.Deno].ExePath,
+            YtDlpVersion: resolvedPaths[ToolKind.YtDlp].Version,
+            FFmpegVersion: resolvedPaths[ToolKind.FFmpeg].Version,
+            DenoVersion: resolvedPaths[ToolKind.Deno].Version);
+    }
+
+    private async Task<ToolStatusInfo> BuildStoreStatusInfoInternalAsync(ToolKind kind, CancellationToken ct)
+    {
+        var def = GetSourceDefinition(kind);
+        var baselineDir = Path.Combine(_paths.BaselineToolsDirectory, GetToolFolderName(kind));
+        var probed = Directory.Exists(baselineDir)
+            ? await ProbeToolDirectoryAsync(kind, baselineDir, ct)
+            : null;
+
+        if (probed is null)
+        {
+            return new ToolStatusInfo(
+                Kind: kind,
+                DisplayName: def.DisplayName,
+                State: ToolHealthState.Corrupted,
+                InstalledVersion: null,
+                PreviousVersion: null,
+                AvailableVersion: null,
+                UpdateAvailable: false,
+                CanRollback: false,
+                ExecutablePath: null,
+                LastCheckedUtc: null,
+                Message: "Bundled tool missing — repair app via Windows Settings → Installed apps");
+        }
+
+        return new ToolStatusInfo(
+            Kind: kind,
+            DisplayName: def.DisplayName,
+            State: ToolHealthState.Ready,
+            InstalledVersion: probed.Value.Version,
+            PreviousVersion: null,
+            AvailableVersion: null,
+            UpdateAvailable: false,
+            CanRollback: false,
+            ExecutablePath: probed.Value.ExePath,
+            LastCheckedUtc: null,
+            Message: "Bundled (updated via Microsoft Store)");
+    }
+
+    private async Task<ToolUpdateCheckResult> BuildStoreManagedUpdateCheckAsync(ToolKind kind, CancellationToken ct)
+    {
+        var def = GetSourceDefinition(kind);
+        var status = await BuildStoreStatusInfoInternalAsync(kind, ct);
+        var sha = TryReadBaselineArchiveSha256(kind);
+
+        return new ToolUpdateCheckResult(
+            Kind: kind,
+            UpdateAvailable: false,
+            CurrentVersion: status.InstalledVersion,
+            LatestVersion: status.InstalledVersion,
+            LatestAssetSha256: sha,
+            DownloadUrl: null,
+            ChecksumUrl: null,
+            AssetName: def.AssetName,
+            Message: "Managed via Microsoft Store updates.");
+    }
 
     private async Task<ToolUpdateCheckResult> CheckForUpdateInternalAsync(ToolManifest manifest, ToolKind kind, bool force, CancellationToken ct)
     {

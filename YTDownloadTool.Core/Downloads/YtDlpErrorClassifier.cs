@@ -223,11 +223,26 @@ public static class YtDlpErrorClassifier
                 DownloadErrorCategory.RateLimited, RetryDirective.TransientBackoff);
         }
 
+        // --- Offline / DNS / unreachable network errors ---
+        if (lower.Contains("failed to resolve")
+            || lower.Contains("temporary failure in name resolution")
+            || lower.Contains("getaddrinfo failed")
+            || lower.Contains("nodename nor servname")
+            || lower.Contains("name or service not known")
+            || lower.Contains("no such host is known")
+            || lower.Contains("network is unreachable")
+            || lower.Contains("no route to host")
+            || lower.Contains("urlopen error"))
+        {
+            return new(
+                "No internet connection detected or the media server could not be reached. Check your network connection and try again.",
+                condensedError, false, true,
+                DownloadErrorCategory.TransientNetwork, RetryDirective.TransientBackoff);
+        }
+
         // --- Transient network / HTTP 5xx / timeout errors -> exponential backoff with jitter (max 3) ---
         if (lower.Contains("timed out")
             || lower.Contains("timeout")
-            || lower.Contains("temporary failure in name resolution")
-            || lower.Contains("getaddrinfo failed")
             || lower.Contains("connection reset")
             || lower.Contains("connection aborted")
             || lower.Contains("remote end closed")
@@ -245,7 +260,7 @@ public static class YtDlpErrorClassifier
             || lower.Contains("eof occurred in violation of protocol"))
         {
             return new(
-                "Network connection failed or timed out while reaching YouTube. Retrying automatically...",
+                "Network connection failed or timed out while reaching the media server. Check your internet connection and retry.",
                 condensedError, false, true,
                 DownloadErrorCategory.TransientNetwork, RetryDirective.TransientBackoff);
         }
