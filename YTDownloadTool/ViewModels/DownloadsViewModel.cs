@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -15,6 +16,7 @@ public sealed partial class DownloadsViewModel : ObservableObject
     private readonly IDownloadOrchestrator _orchestrator;
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<DownloadsViewModel> _logger;
+    private readonly DownloadJobCallbacks _jobCallbacks;
 
     private CancellationTokenSource? _probeCts;
 
@@ -28,6 +30,21 @@ public sealed partial class DownloadsViewModel : ObservableObject
         _orchestrator = orchestrator;
         _settingsStore = settingsStore;
         _logger = logger;
+
+        _jobCallbacks = new DownloadJobCallbacks
+        {
+            Cancel = jobId => _orchestrator.RequestCancel(jobId),
+            Pause = PauseJobFromCardAsync,
+            Resume = ResumeJobFromCardAsync,
+            RecoverPartial = RecoverPartialLivestreamFromCardAsync,
+            Discard = DiscardJobFromCardAsync,
+            MoveUp = MoveJobUpFromCardAsync,
+            MoveDown = MoveJobDownFromCardAsync,
+            MoveToTop = MoveJobToTopFromCardAsync,
+            Retry = retryReq => EnqueueRequestAsync(retryReq with { JobId = Guid.NewGuid().ToString("N") })
+        };
+
+        _orchestrator.JobProgressChanged += OnOrchestratorJobProgressChanged;
 
         var settings = _settingsStore.Current;
         OutputDirectory = settings.DownloadDirectory;
@@ -107,6 +124,27 @@ public sealed partial class DownloadsViewModel : ObservableObject
     };
 
     public string StartButtonText => IsActiveLivestream ? "START RECORDING" : "DOWNLOAD";
+
+    public async Task InitializeFromPersistentQueueAsync()
+    {
+        try
+        {
+            var recovered = await _orchestrator.InitializeAndRecoverAsync();
+            foreach (var job in recovered)
+            {
+                if (Jobs.Any(existing => string.Equals(existing.JobId, job.JobId, StringComparison.Ordinal)))
+                    continue;
+
+                Jobs.Add(DownloadJobItemViewModel.FromPersisted(job, _jobCallbacks));
+            }
+
+            OnPropertyChanged(nameof(HasJobs));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed restoring persisted/interrupted jobs on startup.");
+        }
+    }
 
     partial void OnProbedMediaChanged(MediaProbeResult? value)
     {
@@ -203,7 +241,6 @@ public sealed partial class DownloadsViewModel : ObservableObject
             var result = await _probeService.ProbeAsync(validation.NormalizedUrl!, ct);
             ProbedMedia = result;
 
-            // Default livestream mode safely based on DVR capability
             if (result.IsActiveLivestream)
             {
                 var preferred = _settingsStore.Current.DefaultLivestreamMode;
@@ -281,12 +318,14 @@ public sealed partial class DownloadsViewModel : ObservableObject
             HasMuxedHlsFromStart: ProbedMedia.DvrInfo?.HasMuxedHlsFromStart == true,
             KnownDurationSeconds: ProbedMedia.DurationSeconds);
 
-        await EnqueueRequestAsync(jobRequest);
-
-        // Clear URL input ready for the next link while keeping active jobs visible
-        UrlInput = string.Empty;
-        ProbedMedia = null;
-        AvailableQualities.Clear();
+        var started = await EnqueueRequestAsync(jobRequest);
+        if (started)
+        {
+            ProbeErrorMessage = null;
+            UrlInput = string.Empty;
+            ProbedMedia = null;
+            AvailableQualities.Clear();
+        }
     }
 
     [RelayCommand]
@@ -294,7 +333,7 @@ public sealed partial class DownloadsViewModel : ObservableObject
     {
         for (var i = Jobs.Count - 1; i >= 0; i--)
         {
-            if (!Jobs[i].IsActive)
+            if (Jobs[i].CanClearFromList)
                 Jobs.RemoveAt(i);
         }
 
@@ -309,26 +348,154 @@ public sealed partial class DownloadsViewModel : ObservableObject
         LiveEdgeMarginSeconds = s.LiveEdgeMarginSeconds;
     }
 
-    private async Task EnqueueRequestAsync(DownloadJobRequest request)
+    private async Task<bool> EnqueueRequestAsync(DownloadJobRequest request)
     {
-        var itemVm = new DownloadJobItemViewModel(
-            request,
-            jobId => _orchestrator.RequestCancel(jobId),
-            retryReq => EnqueueRequestAsync(retryReq with { JobId = Guid.NewGuid().ToString("N") }));
-
-        Jobs.Insert(0, itemVm);
+        var itemVm = new DownloadJobItemViewModel(request, _jobCallbacks);
+        Jobs.Add(itemVm);
         OnPropertyChanged(nameof(HasJobs));
 
-        var uiProgress = new Progress<DownloadProgressSnapshot>(snapshot =>
+        try
         {
-            itemVm.ApplySnapshot(snapshot);
+            await _orchestrator.EnqueueAsync(request);
+            return true;
+        }
+        catch (IOException ex)
+        {
+            Jobs.Remove(itemVm);
+            OnPropertyChanged(nameof(HasJobs));
+            ProbeErrorMessage = ex.Message;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Jobs.Remove(itemVm);
+            OnPropertyChanged(nameof(HasJobs));
+            _logger.LogError(ex, "Failed to enqueue download '{Title}'.", request.Title);
+            ProbeErrorMessage = $"Could not start download: {ex.Message}";
+            return false;
+        }
+    }
+
+    private async Task PauseJobFromCardAsync(string jobId)
+    {
+        await _orchestrator.PauseJobAsync(jobId);
+    }
+
+    private async Task ResumeJobFromCardAsync(string jobId)
+    {
+        try
+        {
+            ProbeErrorMessage = null;
+            await _orchestrator.ResumeJobAsync(jobId);
+        }
+        catch (IOException ex)
+        {
+            ProbeErrorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Resume failed for job {JobId}.", jobId);
+            ProbeErrorMessage = $"Could not resume download: {ex.Message}";
+        }
+    }
+
+    private async Task RecoverPartialLivestreamFromCardAsync(string jobId)
+    {
+        var result = await _orchestrator.RecoverPartialLivestreamAsync(jobId);
+        if (result.State == DownloadJobState.Completed)
+        {
+            DownloadCompleted?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private async Task DiscardJobFromCardAsync(string jobId)
+    {
+        await _orchestrator.DiscardJobAsync(jobId);
+        var existing = Jobs.FirstOrDefault(j => string.Equals(j.JobId, jobId, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            Jobs.Remove(existing);
+            OnPropertyChanged(nameof(HasJobs));
+        }
+    }
+
+    private async Task MoveJobUpFromCardAsync(string jobId)
+    {
+        if (await _orchestrator.MoveJobUpAsync(jobId))
+            await SyncQueuedCardsOrderAsync();
+    }
+
+    private async Task MoveJobDownFromCardAsync(string jobId)
+    {
+        if (await _orchestrator.MoveJobDownAsync(jobId))
+            await SyncQueuedCardsOrderAsync();
+    }
+
+    private async Task MoveJobToTopFromCardAsync(string jobId)
+    {
+        if (await _orchestrator.MoveJobToTopAsync(jobId))
+            await SyncQueuedCardsOrderAsync();
+    }
+
+    private async Task SyncQueuedCardsOrderAsync()
+    {
+        var queuedInDb = await _orchestrator.GetQueuedJobsAsync();
+        if (queuedInDb.Count <= 1)
+            return;
+
+        // Collect all queued card indices in Jobs and re-place them in DB QueueOrder order
+        var queuedIndices = new List<int>();
+        var vmById = new Dictionary<string, DownloadJobItemViewModel>(StringComparer.Ordinal);
+        for (var i = 0; i < Jobs.Count; i++)
+        {
+            if (Jobs[i].IsQueued)
+            {
+                queuedIndices.Add(i);
+                vmById[Jobs[i].JobId] = Jobs[i];
+            }
+        }
+
+        var orderedVms = queuedInDb
+            .Where(q => vmById.ContainsKey(q.JobId))
+            .Select(q => vmById[q.JobId])
+            .ToList();
+
+        for (var i = 0; i < Math.Min(queuedIndices.Count, orderedVms.Count); i++)
+        {
+            var slotIndex = queuedIndices[i];
+            var targetVm = orderedVms[i];
+            var currentIndex = Jobs.IndexOf(targetVm);
+            if (currentIndex >= 0 && currentIndex != slotIndex)
+            {
+                Jobs.Move(currentIndex, slotIndex);
+            }
+        }
+    }
+
+    private void OnOrchestratorJobProgressChanged(DownloadProgressSnapshot snapshot)
+    {
+        void ApplyOnUi()
+        {
+            var item = Jobs.FirstOrDefault(j => string.Equals(j.JobId, snapshot.JobId, StringComparison.Ordinal));
+            if (item is null)
+                return;
+
+            item.ApplySnapshot(snapshot);
             if (snapshot.State == DownloadJobState.Completed)
             {
                 DownloadCompleted?.Invoke(this, EventArgs.Empty);
             }
-        });
+        }
 
-        await _orchestrator.EnqueueAsync(request, uiProgress);
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            ApplyOnUi();
+        }
+        else
+        {
+            dispatcher.BeginInvoke(ApplyOnUi);
+        }
     }
 
     private void RefreshQualitiesForCurrentMode()

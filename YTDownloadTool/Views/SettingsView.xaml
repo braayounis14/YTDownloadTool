@@ -5,7 +5,7 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="8,4,12,16">
         <StackPanel>
             <TextBlock Text="Settings &amp; Engine" Foreground="White" FontSize="30" FontWeight="Bold" />
-            <TextBlock Text="Configure downloads, livestream defaults, automatic engine updates, and licenses."
+            <TextBlock Text="Configure downloads, speed caps, livestream defaults, automatic engine updates, and diagnostics."
                        Foreground="{StaticResource SubtleTextBrush}" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,18" />
 
             <!-- General Preferences Card -->
@@ -54,15 +54,38 @@
                         <ComboBox Grid.Column="4" ItemsSource="{Binding LiveMarginOptions}" SelectedItem="{Binding LiveEdgeMarginSeconds}" Style="{StaticResource DarkComboBox}" />
                     </Grid>
 
+                    <!-- Per-Download Speed Limit Row (yt-dlp limit-rate) -->
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Per-Download Speed Limit" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding SpeedLimitPresets}" SelectedItem="{Binding SelectedSpeedLimitPreset}"
+                                  DisplayMemberPath="Label" Style="{StaticResource DarkComboBox}" />
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="10,0,0,0"
+                                    Visibility="{Binding IsCustomSpeedLimitSelected, Converter={StaticResource BoolToVis}}">
+                            <TextBox Text="{Binding CustomSpeedLimitKbpsText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource DarkTextBox}" Width="105" Padding="10,6" FontSize="13" />
+                            <TextBlock Text="KB/s" Foreground="{StaticResource SubtleTextBrush}" FontSize="12"
+                                       VerticalAlignment="Center" Margin="6,0,0,0" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="3" Text="Applies individually to each active download (yt-dlp --limit-rate)."
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap"
+                                   VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </Grid>
+
                     <Grid Margin="0,0,0,14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="175" />
-                            <ColumnDefinition Width="145" />
+                            <ColumnDefinition Width="170" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="yt-dlp Release Channel" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
                         <ComboBox Grid.Column="1" ItemsSource="{Binding YtDlpChannelOptions}" SelectedItem="{Binding YtDlpChannel}" Style="{StaticResource DarkComboBox}" />
-                        <WrapPanel Grid.Column="2" VerticalAlignment="Center" Margin="18,0,0,0">
+                        <WrapPanel Grid.Column="2" VerticalAlignment="Center" Margin="14,0,0,0">
                             <CheckBox Content="Auto-update multimedia engine" IsChecked="{Binding AutoUpdateTools}" Foreground="White" Margin="0,4,18,4" />
                             <CheckBox Content="Auto-check app updates" IsChecked="{Binding AutoCheckAppUpdates}" Foreground="White" Margin="0,4,0,4" />
                         </WrapPanel>
@@ -141,7 +164,86 @@
                 </StackPanel>
             </Border>
 
-            <!-- Application Updates, Diagnostics & Open-Source Licenses -->
+            <!-- Diagnostics & Support Card (Database health, Temp folder hygiene, One-Click Redacted Zip Export) -->
+            <Border Style="{StaticResource GlassCard}" Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="DIAGNOSTICS &amp; SUPPORT" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" />
+                            <TextBlock Text="Inspect local SQLite storage health, reclaim unused temporary folders safely, or export a redacted diagnostic bundle."
+                                       Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="Refresh" Command="{Binding RefreshDiagnosticsCommand}"
+                                    Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
+                            <Button Content="Export Diagnostic Bundle (.zip)" Command="{Binding ExportDiagnosticBundleCommand}"
+                                    IsEnabled="{Binding IsDiagnosticsBusy, Converter={StaticResource InvBool}}"
+                                    Style="{StaticResource PrimaryButton}" Padding="14,8" FontSize="12" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Database Health Row -->
+                    <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Database Health" Foreground="White" FontSize="13" FontWeight="SemiBold" Margin="0,0,10,0" />
+                                        <Border Background="{Binding DatabaseHealthBadgeColor}" CornerRadius="5" Padding="7,2">
+                                            <TextBlock Text="{Binding DatabaseHealthBadgeText}" Foreground="White" FontSize="10" FontWeight="Bold" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding DatabaseSummaryText}" Foreground="{StaticResource SubtleTextBrush}"
+                                               FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding RecentFailuresSummaryText}" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Border Visibility="{Binding DatabaseRecoveryNotice, Converter={StaticResource StrToVis}}"
+                                    Background="#24D29922" BorderBrush="#88D29922" BorderThickness="1"
+                                    CornerRadius="8" Padding="10,7" Margin="0,8,0,0">
+                                <TextBlock Text="{Binding DatabaseRecoveryNotice}" Foreground="#F5D076" FontSize="11" TextWrapping="Wrap" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Temp Storage Row (Protected against deleting paused / recoverable job folders) -->
+                    <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Center">
+                                <TextBlock Text="Temporary Staging Storage" Foreground="White" FontSize="13" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding TempStorageSummaryText}" Foreground="{StaticResource SubtleTextBrush}"
+                                           FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            </StackPanel>
+
+                            <Button Grid.Column="1" Content="Clean Unused Temp" Command="{Binding CleanUnusedTempCommand}"
+                                    IsEnabled="{Binding CanCleanUnusedTemp}"
+                                    Style="{StaticResource SecondaryButton}" VerticalAlignment="Center"
+                                    ToolTip="Removes only orphaned temp folders while preserving paused and recoverable downloads" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="{Binding DiagnosticsFeedback}"
+                               Visibility="{Binding DiagnosticsFeedback, Converter={StaticResource StrToVis}}"
+                               Foreground="{StaticResource AccentBlue}" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- Application Updates, Logs & Open-Source Licenses -->
             <Border Style="{StaticResource GlassCard}">
                 <StackPanel>
                     <TextBlock Text="APPLICATION UPDATES, LOGS &amp; LICENSES" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" Margin="0,0,0,12" />

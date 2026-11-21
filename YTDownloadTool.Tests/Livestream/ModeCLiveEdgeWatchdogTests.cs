@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using YTDownloadTool.Core.Downloads;
@@ -5,6 +6,7 @@ using YTDownloadTool.Core.Livestream;
 using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
+using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
 
 namespace YTDownloadTool.Tests.Livestream;
@@ -21,6 +23,7 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
 
     public void Dispose()
     {
+        SqliteConnection.ClearAllPools();
         try { Directory.Delete(_sandboxRoot, recursive: true); } catch { }
     }
 
@@ -170,6 +173,12 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
             return new ProcessRunResult(0, false, false, false, TimeSpan.FromMilliseconds(50), string.Empty, string.Empty);
         });
 
+        using var db = new SqliteDatabaseManager(paths, NullLogger<SqliteDatabaseManager>.Instance);
+        await db.InitializeAsync();
+        var jobRepo = new SqliteDownloadJobRepository(db, NullLogger<SqliteDownloadJobRepository>.Instance);
+        var diagRepo = new SqliteDiagnosticsRepository(db, NullLogger<SqliteDiagnosticsRepository>.Instance);
+        var ledger = new DiskSpaceReservationLedger(_ => 500L * 1024 * 1024 * 1024);
+
         await using var orchestrator = new DownloadOrchestrator(
             paths,
             fakeToolManager,
@@ -177,6 +186,11 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
             settingsStore,
             historyStore,
             new OutputPathGuard(),
+            jobRepo,
+            diagRepo,
+            ledger,
+            new StubProbeService(),
+            new StubIntegrityService(),
             NullLogger<DownloadOrchestrator>.Instance);
 
         var snapshots = new List<DownloadProgressSnapshot>();
@@ -244,5 +258,19 @@ public sealed class ModeCLiveEdgeWatchdogTests : IDisposable
         public Task<ToolStatusInfo> UpdateToolAsync(ToolKind kind, IProgress<double>? progress = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<ToolStatusInfo> RollbackToolAsync(ToolKind kind, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<ToolStatusInfo> RepairToolAsync(ToolKind kind, IProgress<double>? progress = null, CancellationToken ct = default) => throw new NotImplementedException();
+    }
+
+    private sealed class StubProbeService : IMediaProbeService
+    {
+        public Task<MediaProbeResult> ProbeAsync(string url, CancellationToken ct = default) => throw new NotImplementedException();
+    }
+
+    private sealed class StubIntegrityService : IMediaIntegrityService
+    {
+        public Task<MediaIntegrityProbeInfo> ProbeFileAsync(ResolvedToolchain toolchain, string filePath, bool? expectVideo = null, bool expectAudio = true, CancellationToken ct = default)
+            => Task.FromResult(new MediaIntegrityProbeInfo(true, null, File.Exists(filePath) ? new FileInfo(filePath).Length : 0, 70.0, true, true, "640x360", "h264", "aac"));
+
+        public Task<MediaIntegrityResult> VerifyAndRepairIfNeededAsync(ResolvedToolchain toolchain, string filePath, bool? expectVideo = null, bool expectAudio = true, string? workingTempDirectory = null, CancellationToken ct = default)
+            => Task.FromResult(new MediaIntegrityResult(MediaIntegrityStatus.Verified, "Verified", File.Exists(filePath) ? new FileInfo(filePath).Length : 0, 70.0, "640x360", "h264", "aac", false, DateTimeOffset.UtcNow));
     }
 }

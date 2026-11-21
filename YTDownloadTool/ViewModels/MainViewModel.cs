@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Settings;
+using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
 using YTDownloadTool.Services;
 
@@ -19,6 +20,7 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private readonly IToolManager _toolManager;
     private readonly ISettingsStore _settingsStore;
+    private readonly ISqliteDatabaseManager _dbManager;
     private readonly IDownloadOrchestrator _orchestrator;
     private readonly IAppUpdateService _appUpdateService;
     private readonly ILogger<MainViewModel> _logger;
@@ -29,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject
         SettingsViewModel settingsViewModel,
         IToolManager toolManager,
         ISettingsStore settingsStore,
+        ISqliteDatabaseManager dbManager,
         IDownloadOrchestrator orchestrator,
         IAppUpdateService appUpdateService,
         ILogger<MainViewModel> logger)
@@ -38,6 +41,7 @@ public sealed partial class MainViewModel : ObservableObject
         Settings = settingsViewModel;
         _toolManager = toolManager;
         _settingsStore = settingsStore;
+        _dbManager = dbManager;
         _orchestrator = orchestrator;
         _appUpdateService = appUpdateService;
         _logger = logger;
@@ -45,7 +49,11 @@ public sealed partial class MainViewModel : ObservableObject
         AppVersionLabel = $"v{_appUpdateService.CurrentVersion}";
 
         Downloads.DownloadCompleted += async (_, _) => await Library.RefreshAsync();
-        Settings.SettingsSaved += (_, _) => Downloads.RefreshSettingsFromStore();
+        Settings.SettingsSaved += (_, _) =>
+        {
+            _orchestrator.UpdateMaxConcurrency(_settingsStore.Current.MaxConcurrentDownloads);
+            Downloads.RefreshSettingsFromStore();
+        };
         _appUpdateService.StateChanged += (_, state) =>
         {
             IsAppUpdateReady = state.IsDownloadedReadyToRestart;
@@ -67,6 +75,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _engineStatusColor = "#D29922";
     [ObservableProperty] private bool _isAppUpdateReady;
     [ObservableProperty] private string _appUpdateBannerText = string.Empty;
+    [ObservableProperty] private string? _databaseRecoveryNotice;
 
     public bool IsDownloadsSelected => SelectedTab == AppNavigationTab.Downloads;
     public bool IsLibrarySelected => SelectedTab == AppNavigationTab.Library;
@@ -82,11 +91,24 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task InitializeAsync()
     {
         await _settingsStore.LoadAsync();
-        _orchestrator.PruneOrphanedTempDirectories();
+        _orchestrator.UpdateMaxConcurrency(_settingsStore.Current.MaxConcurrentDownloads);
+        Settings.ReloadFieldsFromStore();
+
+        // 1. Initialize SQLite database (with transactional migrations, pre-migration backup, and one-time history.json import)
+        var dbHealth = await _dbManager.InitializeAsync();
+        if (!string.IsNullOrWhiteSpace(dbHealth.RecoveryNotice))
+        {
+            DatabaseRecoveryNotice = dbHealth.RecoveryNotice;
+        }
+
+        // 2. Recover interrupted VODs & livestreams and restore persisted queue BEFORE pruning orphaned temp folders
+        await Downloads.InitializeFromPersistentQueueAsync();
+        await _orchestrator.PruneOrphanedTempDirectoriesAsync();
+
         Downloads.RefreshSettingsFromStore();
         await Library.RefreshAsync();
 
-        // 1. Ensure multimedia toolchain (yt-dlp, FFmpeg, Deno) is healthy / seeded / ready
+        // 3. Ensure multimedia toolchain (yt-dlp, FFmpeg, Deno) is healthy / seeded / ready
         var statusProgress = new Progress<string>(msg => EngineStatusText = msg);
         try
         {
@@ -101,15 +123,15 @@ public sealed partial class MainViewModel : ObservableObject
             EngineStatusColor = "#DA3633";
         }
 
-        await Settings.RefreshToolStatusesAsync();
+        await Settings.RefreshAllAsync();
 
-        // 2. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
+        // 4. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
         if (_settingsStore.Current.AutoUpdateTools)
         {
             _ = RunBackgroundToolUpdatesAsync();
         }
 
-        // 3. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
+        // 5. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
         _ = _appUpdateService.CheckAndDownloadIfAvailableAsync(isManualCheck: false);
     }
 
@@ -136,6 +158,9 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void DismissDatabaseRecoveryNotice() => DatabaseRecoveryNotice = null;
+
+    [RelayCommand]
     private void SelectDownloads() => SelectedTab = AppNavigationTab.Downloads;
 
     [RelayCommand]
@@ -149,7 +174,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task SelectSettingsAsync()
     {
         SelectedTab = AppNavigationTab.Settings;
-        await Settings.RefreshToolStatusesAsync();
+        await Settings.RefreshAllAsync();
     }
 
     [RelayCommand]

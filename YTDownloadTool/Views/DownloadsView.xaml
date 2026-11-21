@@ -229,26 +229,63 @@
                                         </StackPanel>
                                     </StackPanel>
 
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                                    <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" HorizontalAlignment="Right">
+                                        <!-- Queue Ordering Controls (Queued jobs only) -->
+                                        <Button Content="TOP" Command="{Binding MoveToTopCommand}"
+                                                Visibility="{Binding CanMoveInQueue, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource SecondaryButton}" Padding="9,6" FontSize="11" Margin="0,0,6,6"
+                                                ToolTip="Move to top of queue" />
+                                        <Button Content="▲" Command="{Binding MoveUpCommand}"
+                                                Visibility="{Binding CanMoveInQueue, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource SecondaryButton}" Padding="9,6" FontSize="11" Margin="0,0,6,6"
+                                                ToolTip="Move up in queue" />
+                                        <Button Content="▼" Command="{Binding MoveDownCommand}"
+                                                Visibility="{Binding CanMoveInQueue, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource SecondaryButton}" Padding="9,6" FontSize="11" Margin="0,0,6,6"
+                                                ToolTip="Move down in queue" />
+
+                                        <!-- VOD Pause / Resume (Explicitly disabled on active livestreams) -->
+                                        <Button Content="PAUSE" Command="{Binding PauseCommand}"
+                                                Visibility="{Binding CanPause, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource SecondaryButton}" Margin="0,0,6,6"
+                                                ToolTip="Pause download and keep partial files for later resume" />
+                                        <Button Content="RESUME" Command="{Binding ResumeCommand}"
+                                                Visibility="{Binding CanResume, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource PrimaryButton}" Padding="14,7" FontSize="12" Margin="0,0,6,6"
+                                                ToolTip="Resume download from existing partial files (--continue)" />
+
+                                        <!-- Interrupted Livestream Partial Recovery -->
+                                        <Button Content="RECOVER &amp; SAVE PARTIAL" Command="{Binding RecoverPartialCommand}"
+                                                Visibility="{Binding CanRecoverPartial, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource PrimaryButton}" Padding="12,7" FontSize="11" Margin="0,0,6,6"
+                                                ToolTip="Mux &amp; save the captured portion of this interrupted livestream" />
+
+                                        <!-- Discard Paused / Interrupted Job -->
+                                        <Button Content="DISCARD" Command="{Binding DiscardCommand}"
+                                                Visibility="{Binding CanDiscard, Converter={StaticResource BoolToVis}}"
+                                                Style="{StaticResource DangerButton}" Margin="0,0,6,6"
+                                                ToolTip="Discard job and delete temporary partial files" />
+
+                                        <!-- Cancel (VOD) or Stop & Save (Livestream) -->
                                         <Button Content="{Binding CancelButtonText}" Command="{Binding CancelOrStopCommand}"
                                                 Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}"
-                                                Style="{StaticResource DangerButton}" Margin="0,0,6,0" />
+                                                Style="{StaticResource DangerButton}" Margin="0,0,6,6" />
 
                                         <Button Content="RETRY" Command="{Binding RetryCommand}"
                                                 Visibility="{Binding IsFailed, Converter={StaticResource BoolToVis}}"
-                                                Style="{StaticResource SecondaryButton}" Margin="0,0,6,0" />
+                                                Style="{StaticResource SecondaryButton}" Margin="0,0,6,6" />
 
                                         <Button Content="PLAY" Command="{Binding PlayFileCommand}"
                                                 Visibility="{Binding HasFileOutput, Converter={StaticResource BoolToVis}}"
-                                                Style="{StaticResource SecondaryButton}" Margin="0,0,6,0" />
+                                                Style="{StaticResource SecondaryButton}" Margin="0,0,6,6" />
 
                                         <Button Content="OPEN FOLDER" Command="{Binding OpenFolderCommand}"
-                                                Style="{StaticResource SecondaryButton}" />
-                                    </StackPanel>
+                                                Style="{StaticResource SecondaryButton}" Margin="0,0,0,6" />
+                                    </WrapPanel>
                                 </Grid>
 
                                 <!-- Row 1: Metrics & Phase -->
-                                <Grid Grid.Row="1" Margin="0,12,0,8">
+                                <Grid Grid.Row="1" Margin="0,10,0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="*" />
@@ -256,8 +293,8 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Grid.Column="0" Text="{Binding PhaseLabel}" Foreground="#D8DCEB" FontSize="12"
-                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="0" Text="{Binding PhaseLabel}" Foreground="{Binding PhaseLabelColor}" FontSize="12"
+                                               VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,10,0" />
 
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="SIZE" Foreground="{StaticResource MutedTextBrush}" FontSize="9" FontWeight="Bold" />

@@ -19,6 +19,9 @@ public sealed class AppSettings
     public string DefaultContainer { get; set; } = "mp4";
     public int MaxConcurrentDownloads { get; set; } = 2;
 
+    /// <summary>Per-download speed limit in KB/s (0 = Unlimited), passed to yt-dlp as --limit-rate.</summary>
+    public int PerDownloadSpeedLimitKbps { get; set; } = 0;
+
     public LivestreamRecordingMode DefaultLivestreamMode { get; set; } = LivestreamRecordingMode.RecordFromNow;
     public int LiveEdgeMarginSeconds { get; set; } = 30;
 
@@ -36,6 +39,7 @@ public sealed class AppSettings
         DefaultQuality = DefaultQuality,
         DefaultContainer = DefaultContainer,
         MaxConcurrentDownloads = MaxConcurrentDownloads,
+        PerDownloadSpeedLimitKbps = PerDownloadSpeedLimitKbps,
         DefaultLivestreamMode = DefaultLivestreamMode,
         LiveEdgeMarginSeconds = LiveEdgeMarginSeconds,
         YtDlpChannel = YtDlpChannel,
@@ -51,6 +55,7 @@ public sealed class AppSettings
             DownloadDirectory = fallbackDownloadDirectory;
 
         MaxConcurrentDownloads = Math.Clamp(MaxConcurrentDownloads, 1, 4);
+        PerDownloadSpeedLimitKbps = Math.Clamp(PerDownloadSpeedLimitKbps, 0, 1_000_000);
         LiveEdgeMarginSeconds = Math.Clamp(LiveEdgeMarginSeconds, 15, 300);
         AppUpdateCheckIntervalHours = Math.Clamp(AppUpdateCheckIntervalHours, 12, 168);
 

@@ -3,11 +3,13 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
+using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
 using YTDownloadTool.Services;
 using YTDownloadTool.ViewModels;
@@ -81,7 +83,7 @@ public partial class App : Application
             {
                 Timeout = TimeSpan.FromMinutes(10)
             };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("YTDownloadTool/1.0 (+https://github.com/braayounis14/YTDownloadTool)");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("YTDownloadTool/1.1 (+https://github.com/braayounis14/YTDownloadTool)");
             return client;
         });
 
@@ -90,11 +92,17 @@ public partial class App : Application
             new SafeProcessRunner(sp.GetRequiredService<ILogger<SafeProcessRunner>>(), currentExePath));
 
         services.AddSingleton<ISettingsStore, SettingsStore>();
-        services.AddSingleton<IHistoryStore, HistoryStore>();
+        services.AddSingleton<ISqliteDatabaseManager, SqliteDatabaseManager>();
+        services.AddSingleton<IDownloadJobRepository, SqliteDownloadJobRepository>();
+        services.AddSingleton<IDiagnosticsRepository, SqliteDiagnosticsRepository>();
+        services.AddSingleton<IHistoryStore, SqliteHistoryStore>();
+        services.AddSingleton<IDiskSpaceReservationLedger>(_ => new DiskSpaceReservationLedger());
+        services.AddSingleton<IMediaIntegrityService, MediaIntegrityService>();
         services.AddSingleton<IToolManager, ToolManager>();
         services.AddSingleton<OutputPathGuard>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
         services.AddSingleton<IDownloadOrchestrator, DownloadOrchestrator>();
+        services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
         services.AddSingleton<IAppUpdateService, AppUpdateService>();
 
         services.AddSingleton<DownloadsViewModel>();

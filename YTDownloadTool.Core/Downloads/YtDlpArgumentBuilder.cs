@@ -10,12 +10,19 @@ public static class YtDlpArgumentBuilder
         DownloadJobRequest request,
         string finalSaveDirectory,
         string jobTempDirectory,
-        string relativeBaseFileName)
+        string relativeBaseFileName,
+        int perDownloadSpeedLimitKbps = 0,
+        bool resumeExisting = false)
     {
         ValidateRelativeTemplateName(relativeBaseFileName);
 
         var args = new List<string>();
-        AddCommonEngineArguments(args, toolchain);
+        AddCommonEngineArguments(args, toolchain, perDownloadSpeedLimitKbps);
+
+        if (resumeExisting)
+        {
+            args.Add("--continue");
+        }
 
         if (request.SelectedQuality.IsAudioOnly)
         {
@@ -75,12 +82,13 @@ public static class YtDlpArgumentBuilder
         string finalSaveDirectory,
         string jobTempDirectory,
         string relativeBaseFileName,
-        LivestreamRecordingMode mode)
+        LivestreamRecordingMode mode,
+        int perDownloadSpeedLimitKbps = 0)
     {
         ValidateRelativeTemplateName(relativeBaseFileName);
 
         var args = new List<string>();
-        AddCommonEngineArguments(args, toolchain);
+        AddCommonEngineArguments(args, toolchain, perDownloadSpeedLimitKbps);
 
         args.Add("-f");
         args.Add(request.SelectedQuality.FormatSelector);
@@ -209,7 +217,7 @@ public static class YtDlpArgumentBuilder
         }
     }
 
-    private static void AddCommonEngineArguments(List<string> args, ResolvedToolchain toolchain)
+    private static void AddCommonEngineArguments(List<string> args, ResolvedToolchain toolchain, int perDownloadSpeedLimitKbps)
     {
         args.Add("--no-js-runtimes");
         args.Add("--js-runtimes");
@@ -217,6 +225,12 @@ public static class YtDlpArgumentBuilder
         args.Add("--ffmpeg-location");
         args.Add(toolchain.FFmpegDirectory);
         args.Add("--no-update");
+
+        if (perDownloadSpeedLimitKbps > 0)
+        {
+            args.Add("--limit-rate");
+            args.Add($"{perDownloadSpeedLimitKbps}K");
+        }
     }
 
     private static void AddProgressAndPrintArguments(List<string> args)

@@ -183,6 +183,74 @@ public sealed class ToolManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task ToolManager_BaselineSeededFFmpegWithMatchingArchiveChecksum_ReportsUpToDate()
+    {
+        // Stage fake baseline tools alongside baseline-checksums.json holding the upstream zip SHA-256
+        SeedFakeBaseline("yt-dlp", ("yt-dlp.exe", "ytdlp-v1"));
+        SeedFakeBaseline("ffmpeg", ("ffmpeg.exe", "ffmpeg-v1"), ("ffprobe.exe", "ffprobe-v1"), ("LICENSE.txt", "GPLv3"));
+        SeedFakeBaseline("deno", ("deno.exe", "deno-v1"));
+
+        var matchingArchiveSha = "3032be6e11223344556677889900aabbccddeeff0011223344556677889900aa";
+        var newerArchiveSha = "9999aaaa11223344556677889900aabbccddeeff0011223344556677889900bb";
+        var remoteSha = matchingArchiveSha;
+
+        File.WriteAllText(
+            Path.Combine(_paths.BaselineToolsDirectory, "baseline-checksums.json"),
+            $$"""
+            {
+              "ytDlp": "{{new string('1', 64)}}",
+              "ffmpeg": "{{matchingArchiveSha}}",
+              "deno": "{{new string('2', 64)}}"
+            }
+            """);
+
+        var fakeProcessRunner = new FakeToolProcessRunner(exePath =>
+        {
+            var content = File.ReadAllText(exePath);
+            return content switch
+            {
+                "ytdlp-v1" => (0, "2026.10.26"),
+                "ffmpeg-v1" => (0, "ffmpeg version N-128970-g11337618b2-20261116 Copyright (c) FFmpeg"),
+                "ffprobe-v1" => (0, "ffprobe version N-128970-g11337618b2-20261116"),
+                "deno-v1" => (0, "deno 2.9.8 (stable, release, x86_64-pc-windows-msvc)"),
+                _ => (1, string.Empty)
+            };
+        });
+
+        var httpHandler = new StubHttpHandler(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            if (url == "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/checksums.sha256")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{remoteSha}  ffmpeg-master-latest-win64-gpl-shared.zip\n")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var settingsStore = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
+        await settingsStore.LoadAsync();
+        using var httpClient = new HttpClient(httpHandler);
+        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance);
+
+        await manager.EnsureToolsReadyAsync();
+
+        // 1. Remote checksum matches baseline archive SHA-256 -> MUST report up to date (no ~87 MB re-download!)
+        var checkSame = await manager.CheckForUpdateAsync(ToolKind.FFmpeg, force: true);
+        Assert.False(checkSame.UpdateAvailable);
+        Assert.Equal(matchingArchiveSha, checkSame.LatestAssetSha256);
+
+        // 2. When upstream publishes a genuinely new build with a different SHA-256 -> reports updateAvailable = true
+        remoteSha = newerArchiveSha;
+        var checkNewer = await manager.CheckForUpdateAsync(ToolKind.FFmpeg, force: true);
+        Assert.True(checkNewer.UpdateAvailable);
+        Assert.Equal(newerArchiveSha, checkNewer.LatestAssetSha256);
+    }
+
+    [Fact]
     public async Task ToolManager_CorruptedChecksum_RejectsUpdateAndPreservesWorkingTool()
     {
         SeedFakeBaseline("yt-dlp", ("yt-dlp.exe", "ytdlp-v1"));
