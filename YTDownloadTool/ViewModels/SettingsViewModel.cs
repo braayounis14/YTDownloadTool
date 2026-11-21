@@ -1,14 +1,23 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Settings;
+using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
 using YTDownloadTool.Services;
 
 namespace YTDownloadTool.ViewModels;
+
+public sealed record SpeedLimitPresetOption(string Label, int? LimitKbps)
+{
+    public bool IsCustom => LimitKbps is null;
+    public override string ToString() => Label;
+}
 
 public sealed partial class ToolItemViewModel : ObservableObject
 {
@@ -119,6 +128,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ISettingsStore _settingsStore;
     private readonly IToolManager _toolManager;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IDiagnosticsService _diagnosticsService;
     private readonly IAppPaths _paths;
     private readonly ILogger<SettingsViewModel> _logger;
 
@@ -126,12 +136,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         ISettingsStore settingsStore,
         IToolManager toolManager,
         IAppUpdateService appUpdateService,
+        IDiagnosticsService diagnosticsService,
         IAppPaths paths,
         ILogger<SettingsViewModel> logger)
     {
         _settingsStore = settingsStore;
         _toolManager = toolManager;
         _appUpdateService = appUpdateService;
+        _diagnosticsService = diagnosticsService;
         _paths = paths;
         _logger = logger;
 
@@ -157,6 +169,16 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IReadOnlyList<int> LiveMarginOptions { get; } = [15, 30, 60, 120];
     public IReadOnlyList<string> YtDlpChannelOptions { get; } = ["stable", "nightly"];
 
+    public IReadOnlyList<SpeedLimitPresetOption> SpeedLimitPresets { get; } =
+    [
+        new("Unlimited", 0),
+        new("2 MB/s", 2048),
+        new("5 MB/s", 5120),
+        new("10 MB/s", 10240),
+        new("25 MB/s", 25600),
+        new("Custom (KB/s)", null)
+    ];
+
     public string AppVersionText { get; }
     public string ThirdPartyNoticesText { get; }
 
@@ -164,11 +186,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _defaultQuality = "1080p";
     [ObservableProperty] private string _defaultContainer = "mp4";
     [ObservableProperty] private int _maxConcurrentDownloads = 2;
+    [ObservableProperty] private SpeedLimitPresetOption _selectedSpeedLimitPreset = new("Unlimited", 0);
+    [ObservableProperty] private string _customSpeedLimitKbpsText = "4096";
     [ObservableProperty] private LivestreamRecordingMode _defaultLivestreamMode = LivestreamRecordingMode.RecordFromNow;
     [ObservableProperty] private int _liveEdgeMarginSeconds = 30;
     [ObservableProperty] private string _ytDlpChannel = "stable";
     [ObservableProperty] private bool _autoUpdateTools = true;
     [ObservableProperty] private bool _autoCheckAppUpdates = true;
+
+    public bool IsCustomSpeedLimitSelected => SelectedSpeedLimitPreset?.IsCustom == true;
 
     [ObservableProperty] private string? _saveFeedback;
     [ObservableProperty] private string? _engineActionFeedback;
@@ -177,6 +203,33 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _appUpdateStatusText = string.Empty;
     [ObservableProperty] private bool _isAppUpdateReadyToRestart;
     [ObservableProperty] private bool _showNotices;
+
+    // Diagnostics & Support Card properties
+    [ObservableProperty] private string _databaseHealthBadgeText = "CHECKING";
+    [ObservableProperty] private string _databaseHealthBadgeColor = "#6E7681";
+    [ObservableProperty] private string _databaseSummaryText = "Inspecting SQLite database...";
+    [ObservableProperty] private string? _databaseRecoveryNotice;
+    [ObservableProperty] private string _recentFailuresSummaryText = "--";
+    [ObservableProperty] private string _tempStorageSummaryText = "--";
+    [ObservableProperty] private bool _canCleanUnusedTemp;
+    [ObservableProperty] private bool _isDiagnosticsBusy;
+    [ObservableProperty] private string? _diagnosticsFeedback;
+
+    partial void OnSelectedSpeedLimitPresetChanged(SpeedLimitPresetOption value)
+    {
+        OnPropertyChanged(nameof(IsCustomSpeedLimitSelected));
+    }
+
+    public void ReloadFieldsFromStore()
+    {
+        LoadFieldsFromSettings(_settingsStore.Current);
+    }
+
+    public async Task RefreshAllAsync()
+    {
+        await RefreshToolStatusesAsync();
+        await RefreshDiagnosticsAsync();
+    }
 
     public async Task RefreshToolStatusesAsync()
     {
@@ -193,6 +246,128 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand]
+    public async Task RefreshDiagnosticsAsync()
+    {
+        try
+        {
+            var summary = await _diagnosticsService.GetSummaryAsync();
+            var db = summary.DatabaseHealth;
+
+            DatabaseHealthBadgeText = db.Status switch
+            {
+                DatabaseHealthStatus.Healthy => "HEALTHY",
+                DatabaseHealthStatus.Recovered => "RECOVERED",
+                _ => "ERROR"
+            };
+            DatabaseHealthBadgeColor = db.Status switch
+            {
+                DatabaseHealthStatus.Healthy => "#2EA043",
+                DatabaseHealthStatus.Recovered => "#D29922",
+                _ => "#DA3633"
+            };
+
+            var dbSizeStr = db.DatabaseSizeBytes > 0 ? ShellHelper.FormatBytes(db.DatabaseSizeBytes) : "0 KB";
+            var backupWord = db.BackupCount == 1 ? "backup" : "backups";
+            DatabaseSummaryText = $"SQLite WAL • Schema v{db.CurrentSchemaVersion}/{db.TargetSchemaVersion} • {dbSizeStr} • {db.BackupCount} {backupWord}";
+            DatabaseRecoveryNotice = db.RecoveryNotice;
+
+            RecentFailuresSummaryText = summary.RecentFailureCount == 0
+                ? "No recent failed downloads recorded."
+                : $"{summary.RecentFailureCount} recent failed download summary(ies) recorded (up to 25 included in bundle).";
+
+            var temp = summary.TempStorage;
+            if (temp.TotalBytes == 0)
+            {
+                TempStorageSummaryText = "0 B used in Temp staging folder.";
+            }
+            else if (temp.ProtectedBytes > 0)
+            {
+                TempStorageSummaryText =
+                    $"{ShellHelper.FormatBytes(temp.TotalBytes)} total • {ShellHelper.FormatBytes(temp.ReclaimableUnusedBytes)} unused reclaimable • {ShellHelper.FormatBytes(temp.ProtectedBytes)} protected ({temp.ProtectedFolderCount} paused/recoverable)";
+            }
+            else
+            {
+                TempStorageSummaryText =
+                    $"{ShellHelper.FormatBytes(temp.TotalBytes)} total • {ShellHelper.FormatBytes(temp.ReclaimableUnusedBytes)} unused reclaimable ({temp.UnusedFolderCount} folder(s))";
+            }
+
+            CanCleanUnusedTemp = temp.CanSafelyPrune && (temp.ReclaimableUnusedBytes > 0 || temp.UnusedFolderCount > 0);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not refresh diagnostics summary.");
+            DatabaseHealthBadgeText = "ERROR";
+            DatabaseHealthBadgeColor = "#DA3633";
+            DatabaseSummaryText = $"Could not read diagnostics: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task CleanUnusedTempAsync()
+    {
+        if (IsDiagnosticsBusy) return;
+        IsDiagnosticsBusy = true;
+        DiagnosticsFeedback = "Cleaning unused temporary folders (keeping paused/recoverable jobs intact)...";
+        try
+        {
+            var result = await _diagnosticsService.CleanUnusedTempAsync();
+            if (result.SkippedDueToRecoveryMode)
+            {
+                DiagnosticsFeedback = "Cleanup skipped while database is in recovery mode to protect recoverable downloads.";
+            }
+            else if (result.DeletedFolders == 0 && result.ReclaimedBytes == 0)
+            {
+                DiagnosticsFeedback = "Temp folder is already clean (any remaining folders belong to active, paused, or recoverable jobs).";
+            }
+            else
+            {
+                DiagnosticsFeedback = $"Cleaned {result.DeletedFolders} unused folder(s) and reclaimed {ShellHelper.FormatBytes(result.ReclaimedBytes)}.";
+            }
+
+            await RefreshDiagnosticsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed cleaning unused temp directories.");
+            DiagnosticsFeedback = $"Cleanup error: {ex.Message}";
+        }
+        finally
+        {
+            IsDiagnosticsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportDiagnosticBundleAsync()
+    {
+        if (IsDiagnosticsBusy) return;
+
+        var defaultName = $"YTDownloadTool-Diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
+        var targetZip = ShellHelper.SaveZipFileDialog(defaultName, "Export Diagnostic Bundle");
+        if (string.IsNullOrWhiteSpace(targetZip))
+            return;
+
+        IsDiagnosticsBusy = true;
+        DiagnosticsFeedback = "Exporting redacted diagnostic bundle...";
+        try
+        {
+            var result = await _diagnosticsService.ExportDiagnosticBundleAsync(targetZip, _appUpdateService.CurrentVersion);
+            DiagnosticsFeedback =
+                $"Exported {Path.GetFileName(result.ZipFilePath)} ({ShellHelper.FormatBytes(result.ZipSizeBytes)}, {result.IncludedLogFiles} log(s), {result.IncludedFailedJobs} failed summary(ies)).";
+            ShellHelper.RevealFileInExplorer(result.ZipFilePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed exporting diagnostic bundle to '{Path}'.", targetZip);
+            DiagnosticsFeedback = $"Diagnostic export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDiagnosticsBusy = false;
+        }
+    }
+
+    [RelayCommand]
     private void BrowseDefaultFolder()
     {
         var chosen = ShellHelper.BrowseForFolder(DownloadDirectory, "Select Default Download Folder");
@@ -203,11 +378,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveSettingsAsync()
     {
+        var resolvedSpeedKbps = ResolveSpeedLimitKbps(out var validationError);
+        if (validationError is not null)
+        {
+            SaveFeedback = validationError;
+            return;
+        }
+
         var current = _settingsStore.Current;
         current.DownloadDirectory = DownloadDirectory;
         current.DefaultQuality = DefaultQuality;
         current.DefaultContainer = DefaultContainer;
         current.MaxConcurrentDownloads = MaxConcurrentDownloads;
+        current.PerDownloadSpeedLimitKbps = resolvedSpeedKbps;
         current.DefaultLivestreamMode = DefaultLivestreamMode;
         current.LiveEdgeMarginSeconds = LiveEdgeMarginSeconds;
         current.YtDlpChannel = YtDlpChannel;
@@ -282,6 +465,26 @@ public sealed partial class SettingsViewModel : ObservableObject
         ShowNotices = !ShowNotices;
     }
 
+    private int ResolveSpeedLimitKbps(out string? error)
+    {
+        error = null;
+        if (SelectedSpeedLimitPreset is null)
+            return 0;
+
+        if (!SelectedSpeedLimitPreset.IsCustom)
+            return SelectedSpeedLimitPreset.LimitKbps ?? 0;
+
+        if (!int.TryParse(CustomSpeedLimitKbpsText?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            || parsed < 0
+            || parsed > 1_000_000)
+        {
+            error = "Enter a valid custom per-download speed limit in KB/s (0 to 1000000).";
+            return 0;
+        }
+
+        return parsed;
+    }
+
     private async Task UpdateSingleToolAsync(ToolKind kind, IProgress<double> progress)
     {
         try
@@ -345,6 +548,17 @@ public sealed partial class SettingsViewModel : ObservableObject
         YtDlpChannel = s.YtDlpChannel;
         AutoUpdateTools = s.AutoUpdateTools;
         AutoCheckAppUpdates = s.AutoCheckAppUpdates;
+
+        var matchingPreset = SpeedLimitPresets.FirstOrDefault(p => p.LimitKbps == s.PerDownloadSpeedLimitKbps);
+        if (matchingPreset is not null)
+        {
+            SelectedSpeedLimitPreset = matchingPreset;
+        }
+        else
+        {
+            SelectedSpeedLimitPreset = SpeedLimitPresets.Last();
+            CustomSpeedLimitKbpsText = s.PerDownloadSpeedLimitKbps.ToString(CultureInfo.InvariantCulture);
+        }
     }
 
     private string LoadNoticesText()

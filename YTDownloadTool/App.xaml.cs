@@ -83,7 +83,7 @@ public partial class App : Application
             {
                 Timeout = TimeSpan.FromMinutes(10)
             };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("YTDownloadTool/1.0 (+https://github.com/braayounis14/YTDownloadTool)");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("YTDownloadTool/1.1 (+https://github.com/braayounis14/YTDownloadTool)");
             return client;
         });
 

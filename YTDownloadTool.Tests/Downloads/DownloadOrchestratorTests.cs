@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
+using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
@@ -796,13 +797,16 @@ public sealed class DownloadOrchestratorTests : IDisposable
             services.AddSingleton<OutputPathGuard>();
             services.AddSingleton<IMediaProbeService, MediaProbeService>();
             services.AddSingleton<IDownloadOrchestrator, DownloadOrchestrator>();
-            return services.BuildServiceProvider();
+            services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+            return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
         }
 
         await using (var asyncProvider = BuildRealProvider())
         {
             var orch1 = asyncProvider.GetRequiredService<IDownloadOrchestrator>();
+            var diag1 = asyncProvider.GetRequiredService<IDiagnosticsService>();
             Assert.NotNull(orch1);
+            Assert.NotNull(diag1);
             await asyncProvider.DisposeAsync();
         }
 

@@ -68,6 +68,21 @@ public static class ShellHelper
         return dialog.ShowDialog() == true ? dialog.FolderName : null;
     }
 
+    public static string? SaveZipFileDialog(string defaultFileName, string title = "Export Diagnostic Bundle")
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = title,
+            Filter = "Diagnostic Bundle (*.zip)|*.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = defaultFileName
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
     public static string FormatBytes(long? bytes)
     {
         if (bytes is null or <= 0)
