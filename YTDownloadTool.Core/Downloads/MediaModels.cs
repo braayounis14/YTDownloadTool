@@ -158,4 +158,7 @@ public sealed record DownloadProgressSnapshot(
     string? OutputFilePath = null,
     string? ErrorMessage = null,
     string? TechnicalDetails = null,
-    string? NonFatalNotice = null);
+    string? NonFatalNotice = null,
+    int RetryAttempt = 0,
+    int MaxRetryAttempts = 0,
+    MediaIntegrityStatus? IntegrityStatus = null);

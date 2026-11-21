@@ -102,6 +102,41 @@ public sealed class OutputPathGuard
     }
 
     /// <summary>
+    /// Reserves a previously persisted relative base filename (used when resuming a paused VOD with --continue
+    /// so yt-dlp reuses the exact same .part files inside the job's temp directory).
+    /// </summary>
+    public OutputPathReservation ReserveExactOutputPath(
+        string outputDirectory,
+        string relativeBaseFileName,
+        string extension)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativeBaseFileName);
+
+        var fullOutputDir = Path.GetFullPath(outputDirectory);
+        Directory.CreateDirectory(fullOutputDir);
+
+        var safeExt = extension.Trim().TrimStart('.').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(safeExt))
+            safeExt = "mp4";
+
+        var candidateBasePath = Path.GetFullPath(Path.Combine(fullOutputDir, relativeBaseFileName));
+        var candidateFinalPath = $"{candidateBasePath}.{safeExt}";
+
+        lock (_lock)
+        {
+            _activeBasePaths.Add(candidateBasePath);
+            return new OutputPathReservation(fullOutputDir, relativeBaseFileName, candidateBasePath, candidateFinalPath, () =>
+            {
+                lock (_lock)
+                {
+                    _activeBasePaths.Remove(candidateBasePath);
+                }
+            });
+        }
+    }
+
+    /// <summary>
     /// Checks disk space on both the per-job temporary staging volume and the final user destination volume.
     /// </summary>
     public static void EnsureSufficientDiskSpaceForTempAndDestination(

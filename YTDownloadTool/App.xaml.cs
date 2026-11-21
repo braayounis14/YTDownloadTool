@@ -8,6 +8,7 @@ using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
+using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
 using YTDownloadTool.Services;
 using YTDownloadTool.ViewModels;
@@ -90,7 +91,12 @@ public partial class App : Application
             new SafeProcessRunner(sp.GetRequiredService<ILogger<SafeProcessRunner>>(), currentExePath));
 
         services.AddSingleton<ISettingsStore, SettingsStore>();
-        services.AddSingleton<IHistoryStore, HistoryStore>();
+        services.AddSingleton<ISqliteDatabaseManager, SqliteDatabaseManager>();
+        services.AddSingleton<IDownloadJobRepository, SqliteDownloadJobRepository>();
+        services.AddSingleton<IDiagnosticsRepository, SqliteDiagnosticsRepository>();
+        services.AddSingleton<IHistoryStore, SqliteHistoryStore>();
+        services.AddSingleton<IDiskSpaceReservationLedger>(_ => new DiskSpaceReservationLedger());
+        services.AddSingleton<IMediaIntegrityService, MediaIntegrityService>();
         services.AddSingleton<IToolManager, ToolManager>();
         services.AddSingleton<OutputPathGuard>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
