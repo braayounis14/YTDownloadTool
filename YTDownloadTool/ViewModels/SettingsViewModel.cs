@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Paths;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
@@ -27,11 +28,13 @@ public sealed partial class ToolItemViewModel : ObservableObject
 
     public ToolItemViewModel(
         ToolStatusInfo status,
+        bool allowSelfUpdateControls,
         Func<ToolKind, IProgress<double>, Task> updateAction,
         Func<ToolKind, Task> rollbackAction,
         Func<ToolKind, IProgress<double>, Task> repairAction)
     {
         Kind = status.Kind;
+        AllowSelfUpdateControls = allowSelfUpdateControls;
         _updateAction = updateAction;
         _rollbackAction = rollbackAction;
         _repairAction = repairAction;
@@ -39,6 +42,7 @@ public sealed partial class ToolItemViewModel : ObservableObject
     }
 
     public ToolKind Kind { get; }
+    public bool AllowSelfUpdateControls { get; }
 
     [ObservableProperty] private string _displayName = string.Empty;
     [ObservableProperty] private ToolHealthState _state;
@@ -50,6 +54,8 @@ public sealed partial class ToolItemViewModel : ObservableObject
     [ObservableProperty] private string _statusMessage = string.Empty;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private double _downloadProgress;
+
+    public bool ShowRollbackButton => AllowSelfUpdateControls && CanRollback;
 
     public string StateBadgeColor => State switch
     {
@@ -70,12 +76,13 @@ public sealed partial class ToolItemViewModel : ObservableObject
         CanRollback = info.CanRollback;
         StatusMessage = info.Message;
         OnPropertyChanged(nameof(StateBadgeColor));
+        OnPropertyChanged(nameof(ShowRollbackButton));
     }
 
     [RelayCommand]
     private async Task UpdateAsync()
     {
-        if (IsBusy) return;
+        if (!AllowSelfUpdateControls || IsBusy) return;
         IsBusy = true;
         DownloadProgress = 0;
         StatusMessage = "Downloading & verifying update...";
@@ -92,7 +99,7 @@ public sealed partial class ToolItemViewModel : ObservableObject
     [RelayCommand]
     private async Task RollbackAsync()
     {
-        if (IsBusy || !CanRollback) return;
+        if (!AllowSelfUpdateControls || IsBusy || !CanRollback) return;
         IsBusy = true;
         StatusMessage = "Rolling back...";
         try
@@ -108,7 +115,7 @@ public sealed partial class ToolItemViewModel : ObservableObject
     [RelayCommand]
     private async Task RepairAsync()
     {
-        if (IsBusy) return;
+        if (!AllowSelfUpdateControls || IsBusy) return;
         IsBusy = true;
         DownloadProgress = 0;
         StatusMessage = "Repairing tool...";
@@ -125,10 +132,16 @@ public sealed partial class ToolItemViewModel : ObservableObject
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
+    public const string LegalNoticeBody =
+        "Tidejar is an independent third-party desktop utility and is not affiliated with, endorsed by, or sponsored by YouTube or Google LLC. " +
+        "Users are responsible for complying with applicable copyright laws and platform terms of service, and should only save content they own, " +
+        "have permission to download, or are legally permitted to archive for personal use.";
+
     private readonly ISettingsStore _settingsStore;
     private readonly IToolManager _toolManager;
     private readonly IAppUpdateService _appUpdateService;
     private readonly IDiagnosticsService _diagnosticsService;
+    private readonly IDistributionProfile _distributionProfile;
     private readonly IAppPaths _paths;
     private readonly ILogger<SettingsViewModel> _logger;
 
@@ -137,6 +150,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         IToolManager toolManager,
         IAppUpdateService appUpdateService,
         IDiagnosticsService diagnosticsService,
+        IDistributionProfile distributionProfile,
         IAppPaths paths,
         ILogger<SettingsViewModel> logger)
     {
@@ -144,23 +158,43 @@ public sealed partial class SettingsViewModel : ObservableObject
         _toolManager = toolManager;
         _appUpdateService = appUpdateService;
         _diagnosticsService = diagnosticsService;
+        _distributionProfile = distributionProfile;
         _paths = paths;
         _logger = logger;
 
-        AppVersionText = $"YTDownloadTool v{_appUpdateService.CurrentVersion}";
+        IsStoreManaged = _distributionProfile.IsStoreManaged;
+        AppVersionText = $"{_distributionProfile.AppDisplayName} v{_appUpdateService.CurrentVersion}";
+        EditionBadgeText = IsStoreManaged ? "MICROSOFT STORE" : "DESKTOP EDITION";
+        PrivacyPolicyUrl = _distributionProfile.PrivacyPolicyUrl;
+        EngineSectionTitle = IsStoreManaged
+            ? "MULTIMEDIA ENGINE (BUNDLED)"
+            : "MULTIMEDIA ENGINE (MANAGED AUTOMATICALLY)";
+        EngineSectionDescription = IsStoreManaged
+            ? "yt-dlp, FFmpeg/FFprobe, and Deno are bundled inside Tidejar and updated automatically through Microsoft Store updates."
+            : "yt-dlp, FFmpeg/FFprobe, and Deno are verified via SHA-256 and updated independently without manual setup.";
+
         AppUpdateStatusText = _appUpdateService.CurrentState.StatusMessage;
-        IsAppUpdateReadyToRestart = _appUpdateService.CurrentState.IsDownloadedReadyToRestart;
+        IsAppUpdateReadyToRestart = !IsStoreManaged && _appUpdateService.CurrentState.IsDownloadedReadyToRestart;
         _appUpdateService.StateChanged += (_, s) =>
         {
             AppUpdateStatusText = s.StatusMessage;
-            IsAppUpdateReadyToRestart = s.IsDownloadedReadyToRestart;
+            IsAppUpdateReadyToRestart = !IsStoreManaged && s.IsDownloadedReadyToRestart;
         };
 
         ThirdPartyNoticesText = LoadNoticesText();
+        PrivacyPolicyOfflineText = LoadPrivacyPolicyText();
         LoadFieldsFromSettings(_settingsStore.Current);
     }
 
     public event EventHandler? SettingsSaved;
+
+    public bool IsStoreManaged { get; }
+    public bool IsSelfManagedDesktop => !IsStoreManaged;
+    public string EditionBadgeText { get; }
+    public string EngineSectionTitle { get; }
+    public string EngineSectionDescription { get; }
+    public string PrivacyPolicyUrl { get; }
+    public string LegalNoticeText => LegalNoticeBody;
 
     public ObservableCollection<ToolItemViewModel> Tools { get; } = [];
     public IReadOnlyList<string> QualityOptions { get; } = ["2160p", "1440p", "1080p", "720p", "480p"];
@@ -181,6 +215,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public string AppVersionText { get; }
     public string ThirdPartyNoticesText { get; }
+    public string PrivacyPolicyOfflineText { get; }
 
     [ObservableProperty] private string _downloadDirectory = string.Empty;
     [ObservableProperty] private string _defaultQuality = "1080p";
@@ -203,6 +238,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _appUpdateStatusText = string.Empty;
     [ObservableProperty] private bool _isAppUpdateReadyToRestart;
     [ObservableProperty] private bool _showNotices;
+    [ObservableProperty] private bool _showPrivacyPolicyOffline;
 
     // Diagnostics & Support Card properties
     [ObservableProperty] private string _databaseHealthBadgeText = "CHECKING";
@@ -239,6 +275,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             Tools.Add(new ToolItemViewModel(
                 status,
+                allowSelfUpdateControls: IsSelfManagedDesktop,
                 UpdateSingleToolAsync,
                 RollbackSingleToolAsync,
                 RepairSingleToolAsync));
@@ -342,7 +379,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (IsDiagnosticsBusy) return;
 
-        var defaultName = $"YTDownloadTool-Diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
+        var defaultName = $"Tidejar-Diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip";
         var targetZip = ShellHelper.SaveZipFileDialog(defaultName, "Export Diagnostic Bundle");
         if (string.IsNullOrWhiteSpace(targetZip))
             return;
@@ -358,7 +395,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed exporting diagnostic bundle to '{Path}'.", targetZip);
+            _logger.LogError(ex, "Failed exporting diagnostic bundle.");
             DiagnosticsFeedback = $"Diagnostic export failed: {ex.Message}";
         }
         finally
@@ -405,7 +442,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task CheckEngineUpdatesAsync()
     {
-        if (IsCheckingEngineUpdates) return;
+        if (IsStoreManaged || IsCheckingEngineUpdates) return;
         IsCheckingEngineUpdates = true;
         EngineActionFeedback = "Checking official GitHub releases for yt-dlp, FFmpeg, and Deno...";
         try
@@ -420,7 +457,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Manual engine update check failed.");
-            EngineActionFeedback = $"Update check failed: {ex.Message}";
+            EngineActionFeedback = "Could not check for engine updates. Check your internet connection and try again.";
         }
         finally
         {
@@ -431,7 +468,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task CheckAppUpdatesAsync()
     {
-        if (IsCheckingAppUpdates) return;
+        if (IsStoreManaged || IsCheckingAppUpdates) return;
         IsCheckingAppUpdates = true;
         AppUpdateStatusText = "Checking for application updates...";
         try
@@ -449,7 +486,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void ApplyAppUpdateNow()
     {
-        _appUpdateService.ApplyUpdateAndRestart();
+        if (!IsStoreManaged)
+            _appUpdateService.ApplyUpdateAndRestart();
     }
 
     [RelayCommand]
@@ -457,6 +495,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _paths.EnsureDirectoriesExist();
         ShellHelper.OpenFolder(_paths.LogsDirectory);
+    }
+
+    [RelayCommand]
+    private void OpenPrivacyPolicyOnline()
+    {
+        if (!ShellHelper.OpenUrl(PrivacyPolicyUrl))
+        {
+            ShowPrivacyPolicyOffline = true;
+        }
+    }
+
+    [RelayCommand]
+    private void TogglePrivacyPolicyOffline()
+    {
+        ShowPrivacyPolicyOffline = !ShowPrivacyPolicyOffline;
     }
 
     [RelayCommand]
@@ -487,6 +540,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private async Task UpdateSingleToolAsync(ToolKind kind, IProgress<double> progress)
     {
+        if (IsStoreManaged) return;
         try
         {
             var updated = await _toolManager.UpdateToolAsync(kind, progress);
@@ -503,6 +557,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private async Task RollbackSingleToolAsync(ToolKind kind)
     {
+        if (IsStoreManaged) return;
         try
         {
             var rolled = await _toolManager.RollbackToolAsync(kind);
@@ -518,6 +573,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private async Task RepairSingleToolAsync(ToolKind kind, IProgress<double> progress)
     {
+        if (IsStoreManaged) return;
         try
         {
             var repaired = await _toolManager.RepairToolAsync(kind, progress);
@@ -563,12 +619,29 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private string LoadNoticesText()
     {
-        var path = Path.Combine(_paths.AppDirectory, "THIRD_PARTY_NOTICES.txt");
+        var path = _paths.ThirdPartyNoticesFilePath;
         if (File.Exists(path))
         {
             try { return File.ReadAllText(path); } catch { }
         }
 
-        return "YTDownloadTool uses yt-dlp (The Unlicense), FFmpeg (GPLv3 via yt-dlp/FFmpeg-Builds), Deno (MIT), and Velopack (MIT).";
+        return "Tidejar uses yt-dlp (The Unlicense), FFmpeg (GPLv3 via yt-dlp/FFmpeg-Builds), Deno (MIT), and Microsoft.Data.Sqlite / SQLite.";
+    }
+
+    private string LoadPrivacyPolicyText()
+    {
+        var path = _paths.PrivacyPolicyFilePath;
+        if (File.Exists(path))
+        {
+            try { return File.ReadAllText(path); } catch { }
+        }
+
+        return
+            "Tidejar - Video & Stream Saver — Privacy Policy (Offline Summary)\n\n" +
+            "- Zero telemetry, analytics, ads, or user tracking.\n" +
+            "- Settings, queue, and library history are stored strictly locally in SQLite and JSON on your device.\n" +
+            "- Network connections are made only to media URLs you explicitly enter (and official GitHub Releases only in the non-Store edition).\n" +
+            "- Exported diagnostic bundles are opt-in and automatically redact credentials, tokens, cookies, and Windows user profile paths.\n" +
+            $"- Full policy online: {PrivacyPolicyUrl}";
     }
 }

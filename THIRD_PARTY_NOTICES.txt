@@ -1,9 +1,12 @@
-YTDownloadTool — Third-Party Software & Open-Source License Notices
-====================================================================
+Tidejar - Video & Stream Saver — Third-Party Software & Open-Source License Notices
+===================================================================================
 
-YTDownloadTool bundles and automatically manages external command-line multimedia
-utilities invoked out-of-process as standalone executables. YTDownloadTool does not
-claim copyright over any third-party component listed below.
+Tidejar bundles and invokes external command-line multimedia utilities out-of-process
+as standalone executables. Tidejar and Baraa Younis do not claim copyright over any
+third-party component listed below.
+
+Tidejar is an independent third-party desktop utility and is not affiliated with,
+endorsed by, or sponsored by YouTube or Google LLC.
 
 --------------------------------------------------------------------
 1. FFmpeg & FFprobe (yt-dlp/FFmpeg-Builds, GPL-shared)
@@ -17,19 +20,19 @@ supporting shared libraries) from the FFmpeg project built via yt-dlp/FFmpeg-Bui
 licensed under the GNU General Public License v3.0 (GPLv3).
 
 The full GPLv3 license text is distributed alongside the FFmpeg binaries in
-LICENSE.txt (inside the application's BaselineTools\ffmpeg and managed Tools\ffmpeg
-directories) and is also available at https://www.gnu.org/licenses/gpl-3.0.html.
+LICENSE.txt (inside the application's BaselineTools\ffmpeg directory) and is also
+available at https://www.gnu.org/licenses/gpl-3.0.html.
 
 Corresponding Source Code & Build Provenance (GPLv3 Section 6):
 - Exact upstream FFmpeg source code, yt-dlp patches, and build scripts for every
   released version are published at:
   * https://github.com/yt-dlp/FFmpeg-Builds
   * https://github.com/FFmpeg/FFmpeg
-  * And archived/referenced alongside YTDownloadTool releases at:
+  * And referenced alongside Tidejar releases at:
     https://github.com/braayounis14/YTDownloadTool/releases
 
 Note: FFmpeg is invoked strictly as an external standalone command-line utility
-(separate process) and is not linked into YTDownloadTool assemblies.
+(separate process) and is not linked into Tidejar assemblies.
 
 --------------------------------------------------------------------
 2. yt-dlp
@@ -65,6 +68,8 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 4. .NET & Application NuGet Libraries
 --------------------------------------------------------------------
 - .NET Runtime & WPF (Microsoft) — MIT License
+- Microsoft.Data.Sqlite & SQLitePCLRaw — MIT / Apache-2.0 License
+- SQLite — Public Domain (https://www.sqlite.org/copyright.html)
 - CommunityToolkit.Mvvm (.NET Foundation) — MIT License
 - Microsoft.Extensions.DependencyInjection & Logging — MIT License
-- Velopack (https://velopack.io / https://github.com/velopack/velopack) — MIT License
+- Velopack (GitHub desktop edition only; excluded from Microsoft Store MSIX builds) — MIT License

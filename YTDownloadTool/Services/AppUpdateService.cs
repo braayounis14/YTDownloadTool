@@ -1,9 +1,12 @@
+#if !STORE_MSIX
 using System.Net;
 using System.Net.Http;
-using System.Reflection;
-using Microsoft.Extensions.Logging;
 using Velopack;
 using Velopack.Sources;
+#endif
+using System.Reflection;
+using Microsoft.Extensions.Logging;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Settings;
 
 namespace YTDownloadTool.Services;
@@ -17,6 +20,7 @@ public sealed record AppUpdateState(
 
 public interface IAppUpdateService
 {
+    bool IsStoreManaged { get; }
     string CurrentVersion { get; }
     AppUpdateState CurrentState { get; }
     event EventHandler<AppUpdateState>? StateChanged;
@@ -28,28 +32,54 @@ public interface IAppUpdateService
 public sealed class AppUpdateService : IAppUpdateService
 {
     public const string GitHubRepositoryUrl = "https://github.com/braayounis14/YTDownloadTool";
+    public const string StoreManagedStatusMessage =
+        "Installed via Microsoft Store — updates are delivered automatically by the Store.";
 
+    private readonly IDistributionProfile _distributionProfile;
+#if !STORE_MSIX
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<AppUpdateService> _logger;
     private readonly SemaphoreSlim _checkLock = new(1, 1);
-
     private UpdateInfo? _pendingUpdate;
+#endif
     private AppUpdateState _currentState;
 
-    public AppUpdateService(ISettingsStore settingsStore, ILogger<AppUpdateService> logger)
+    public AppUpdateService(
+        ISettingsStore settingsStore,
+        IDistributionProfile distributionProfile,
+        ILogger<AppUpdateService> logger)
     {
+        _distributionProfile = distributionProfile;
+#if !STORE_MSIX
         _settingsStore = settingsStore;
         _logger = logger;
+#else
+        _ = settingsStore;
+        _ = logger;
+#endif
         CurrentVersion = ResolveCurrentVersion();
-        _currentState = new AppUpdateState(false, false, CurrentVersion, null, "Up to date");
+        _currentState = _distributionProfile.IsStoreManaged
+            ? new AppUpdateState(false, false, CurrentVersion, null, StoreManagedStatusMessage)
+            : new AppUpdateState(false, false, CurrentVersion, null, "Up to date");
     }
 
+    public bool IsStoreManaged => _distributionProfile.IsStoreManaged;
     public string CurrentVersion { get; }
     public AppUpdateState CurrentState => _currentState;
     public event EventHandler<AppUpdateState>? StateChanged;
 
     public async Task<AppUpdateState> CheckAndDownloadIfAvailableAsync(bool isManualCheck, CancellationToken ct = default)
     {
+        // Policy 10.2.5: Store MSIX builds must never self-update or poll GitHub Releases.
+        if (_distributionProfile.IsStoreManaged)
+        {
+            return PublishState(new AppUpdateState(false, false, CurrentVersion, null, StoreManagedStatusMessage));
+        }
+
+#if STORE_MSIX
+        await Task.CompletedTask;
+        return PublishState(new AppUpdateState(false, false, CurrentVersion, null, StoreManagedStatusMessage));
+#else
         await _checkLock.WaitAsync(ct);
         try
         {
@@ -79,7 +109,7 @@ public sealed class AppUpdateService : IAppUpdateService
             {
                 var devMsg = isManualCheck
                     ? "Running in portable / development mode (auto-update activates when installed via Setup.exe)."
-                    : "Development mode";
+                    : "Portable edition";
                 return PublishState(new AppUpdateState(false, false, CurrentVersion, null, devMsg));
             }
 
@@ -112,10 +142,7 @@ public sealed class AppUpdateService : IAppUpdateService
             {
                 _logger.LogDebug(ex, "GitHub release check rate-limited (HTTP 403/429).");
                 if (!isManualCheck)
-                {
-                    // Silently ignore HTTP 403 rate limits during background checks.
                     return _currentState;
-                }
 
                 return PublishState(new AppUpdateState(false, false, CurrentVersion, null,
                     "Update server temporarily rate-limited. Please try again later."));
@@ -126,16 +153,21 @@ public sealed class AppUpdateService : IAppUpdateService
                 return _currentState;
 
             return PublishState(new AppUpdateState(false, false, CurrentVersion, null,
-                $"Could not check for updates: {ex.Message}"));
+                "Could not check for updates. Check your internet connection and try again."));
         }
         finally
         {
             _checkLock.Release();
         }
+#endif
     }
 
     public void ApplyUpdateAndRestart()
     {
+        if (_distributionProfile.IsStoreManaged)
+            return;
+
+#if !STORE_MSIX
         if (_pendingUpdate is null)
             return;
 
@@ -146,6 +178,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
         _logger.LogInformation("Applying downloaded Velopack update v{Version} and restarting.", _pendingUpdate.TargetFullRelease.Version);
         mgr.ApplyUpdatesAndRestart(_pendingUpdate.TargetFullRelease);
+#endif
     }
 
     private AppUpdateState PublishState(AppUpdateState next)
@@ -155,6 +188,7 @@ public sealed class AppUpdateService : IAppUpdateService
         return next;
     }
 
+#if !STORE_MSIX
     private static bool IsRateLimitOrForbidden(Exception ex)
     {
         for (var cur = ex; cur is not null; cur = cur.InnerException)
@@ -174,6 +208,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
         return false;
     }
+#endif
 
     private static string ResolveCurrentVersion()
     {
@@ -182,6 +217,6 @@ public sealed class AppUpdateService : IAppUpdateService
         if (!string.IsNullOrWhiteSpace(infoVer))
             return infoVer.Split('+')[0];
 
-        return asm.GetName().Version?.ToString(3) ?? "1.0.0";
+        return asm.GetName().Version?.ToString(3) ?? "1.1.0";
     }
 }

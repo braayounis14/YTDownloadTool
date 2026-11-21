@@ -7,6 +7,7 @@ using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Storage;
@@ -37,7 +38,8 @@ public partial class App : Application
 
         _serviceProvider = services.BuildServiceProvider();
         _logger = _serviceProvider.GetRequiredService<ILogger<App>>();
-        _logger.LogInformation("YTDownloadTool starting up.");
+        _logger.LogInformation("Tidejar starting up (StoreManaged={IsStore}, PackagedMsix={IsMsix}).",
+            DistributionProfile.Current.IsStoreManaged, DistributionProfile.Current.IsPackagedMsix);
 
         var mainWindow = _serviceProvider.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
@@ -46,7 +48,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _logger?.LogInformation("YTDownloadTool shutting down.");
+        _logger?.LogInformation("Tidejar shutting down.");
 
         if (_serviceProvider is { } provider)
         {
@@ -69,6 +71,7 @@ public partial class App : Application
     private static void ConfigureServices(IServiceCollection services, DefaultAppPaths paths)
     {
         services.AddSingleton<IAppPaths>(paths);
+        services.AddSingleton<IDistributionProfile>(DistributionProfile.Current);
 
         services.AddLogging(builder =>
         {
@@ -83,7 +86,7 @@ public partial class App : Application
             {
                 Timeout = TimeSpan.FromMinutes(10)
             };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("YTDownloadTool/1.1 (+https://github.com/braayounis14/YTDownloadTool)");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Tidejar/1.1 (+https://github.com/braayounis14/YTDownloadTool)");
             return client;
         });
 
@@ -117,7 +120,7 @@ public partial class App : Application
         _logger?.LogCritical(e.Exception, "Unhandled UI dispatcher exception.");
         MessageBox.Show(
             $"An unexpected error occurred:\n\n{e.Exception.Message}\n\nDetails have been written to the application log.",
-            "YTDownloadTool — Unexpected Error",
+            "Tidejar — Unexpected Error",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         e.Handled = true;

@@ -5,7 +5,7 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="8,4,12,16">
         <StackPanel>
             <TextBlock Text="Settings &amp; Engine" Foreground="White" FontSize="30" FontWeight="Bold" />
-            <TextBlock Text="Configure downloads, speed caps, livestream defaults, automatic engine updates, and diagnostics."
+            <TextBlock Text="Configure downloads, speed caps, livestream defaults, diagnostics, privacy, and open-source licenses."
                        Foreground="{StaticResource SubtleTextBrush}" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,18" />
 
             <!-- General Preferences Card -->
@@ -55,7 +55,7 @@
                     </Grid>
 
                     <!-- Per-Download Speed Limit Row (yt-dlp limit-rate) -->
-                    <Grid Margin="0,0,0,12">
+                    <Grid Margin="0,0,0,14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="175" />
                             <ColumnDefinition Width="170" />
@@ -77,7 +77,8 @@
                                    VerticalAlignment="Center" Margin="14,0,0,0" />
                     </Grid>
 
-                    <Grid Margin="0,0,0,14">
+                    <!-- Self-Update Options (Non-Store Desktop Edition Only; Hidden in Microsoft Store MSIX Builds) -->
+                    <Grid Margin="0,0,0,14" Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="175" />
                             <ColumnDefinition Width="170" />
@@ -99,7 +100,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- Managed Multimedia Engine Card (yt-dlp, FFmpeg, Deno) -->
+            <!-- Multimedia Engine Card (Bundled Read-Only in Store MSIX; Independently Managed in GitHub Desktop) -->
             <Border Style="{StaticResource GlassCard}" Margin="0,0,0,16">
                 <StackPanel>
                     <Grid Margin="0,0,0,12">
@@ -108,11 +109,12 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                            <TextBlock Text="MULTIMEDIA ENGINE (MANAGED AUTOMATICALLY)" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" />
-                            <TextBlock Text="yt-dlp, FFmpeg/FFprobe, and Deno are verified via SHA-256 and updated independently without manual setup."
+                            <TextBlock Text="{Binding EngineSectionTitle}" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" />
+                            <TextBlock Text="{Binding EngineSectionDescription}"
                                        Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0" />
                         </StackPanel>
                         <Button Grid.Column="1" Content="Check Engine Updates" Command="{Binding CheckEngineUpdatesCommand}"
+                                Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}"
                                 Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" />
                     </Grid>
 
@@ -147,11 +149,12 @@
                                                          Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
                                         </StackPanel>
 
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                                                    Visibility="{Binding AllowSelfUpdateControls, Converter={StaticResource BoolToVis}}">
                                             <Button Content="Update" Command="{Binding UpdateCommand}"
                                                     Style="{StaticResource PrimaryButton}" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
                                             <Button Content="Rollback" Command="{Binding RollbackCommand}"
-                                                    Visibility="{Binding CanRollback, Converter={StaticResource BoolToVis}}"
+                                                    Visibility="{Binding ShowRollbackButton, Converter={StaticResource BoolToVis}}"
                                                     Style="{StaticResource SecondaryButton}" Margin="0,0,6,0" />
                                             <Button Content="Repair" Command="{Binding RepairCommand}"
                                                     Style="{StaticResource SecondaryButton}" />
@@ -164,7 +167,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- Diagnostics & Support Card (Database health, Temp folder hygiene, One-Click Redacted Zip Export) -->
+            <!-- Diagnostics & Support Card -->
             <Border Style="{StaticResource GlassCard}" Margin="0,0,0,16">
                 <StackPanel>
                     <Grid Margin="0,0,0,12">
@@ -189,24 +192,16 @@
                     <!-- Database Health Row -->
                     <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,10">
                         <StackPanel>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="Database Health" Foreground="White" FontSize="13" FontWeight="SemiBold" Margin="0,0,10,0" />
-                                        <Border Background="{Binding DatabaseHealthBadgeColor}" CornerRadius="5" Padding="7,2">
-                                            <TextBlock Text="{Binding DatabaseHealthBadgeText}" Foreground="White" FontSize="10" FontWeight="Bold" />
-                                        </Border>
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding DatabaseSummaryText}" Foreground="{StaticResource SubtleTextBrush}"
-                                               FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
-                                    <TextBlock Text="{Binding RecentFailuresSummaryText}" Foreground="{StaticResource MutedTextBrush}"
-                                               FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
-                                </StackPanel>
-                            </Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Database Health" Foreground="White" FontSize="13" FontWeight="SemiBold" Margin="0,0,10,0" />
+                                <Border Background="{Binding DatabaseHealthBadgeColor}" CornerRadius="5" Padding="7,2">
+                                    <TextBlock Text="{Binding DatabaseHealthBadgeText}" Foreground="White" FontSize="10" FontWeight="Bold" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="{Binding DatabaseSummaryText}" Foreground="{StaticResource SubtleTextBrush}"
+                                       FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding RecentFailuresSummaryText}" Foreground="{StaticResource MutedTextBrush}"
+                                       FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0" />
 
                             <Border Visibility="{Binding DatabaseRecoveryNotice, Converter={StaticResource StrToVis}}"
                                     Background="#24D29922" BorderBrush="#88D29922" BorderThickness="1"
@@ -216,7 +211,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Temp Storage Row (Protected against deleting paused / recoverable job folders) -->
+                    <!-- Temp Storage Row -->
                     <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -243,46 +238,73 @@
                 </StackPanel>
             </Border>
 
-            <!-- Application Updates, Logs & Open-Source Licenses -->
+            <!-- About, Updates, Privacy Policy & Legal Notices -->
             <Border Style="{StaticResource GlassCard}">
                 <StackPanel>
-                    <TextBlock Text="APPLICATION UPDATES, LOGS &amp; LICENSES" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" Margin="0,0,0,12" />
+                    <TextBlock Text="ABOUT, UPDATES, PRIVACY &amp; LEGAL" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" Margin="0,0,0,12" />
 
-                    <!-- Non-overlapping 2-column Grid: Column 0 wraps cleanly, Column 1 hosts right-aligned actions -->
-                    <Grid Margin="0,0,0,10">
+                    <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Top">
-                            <TextBlock Text="{Binding AppVersionText}" Foreground="White" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding AppVersionText}" Foreground="White" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
+                                <Border Background="#2600D2FF" BorderBrush="#5500D2FF" BorderThickness="1" CornerRadius="5" Padding="7,2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding EditionBadgeText}" Foreground="#9EEBFF" FontSize="9" FontWeight="Bold" />
+                                </Border>
+                            </StackPanel>
                             <TextBlock Text="{Binding AppUpdateStatusText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="12"
-                                       TextWrapping="Wrap" Margin="0,4,0,0" />
+                                       TextWrapping="Wrap" Margin="0,5,0,0" />
                         </StackPanel>
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                        Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}"
+                                        Margin="0,0,0,8">
                                 <Button Content="Restart &amp; Update" Command="{Binding ApplyAppUpdateNowCommand}"
                                         Visibility="{Binding IsAppUpdateReadyToRestart, Converter={StaticResource BoolToVis}}"
                                         Style="{StaticResource PrimaryButton}" Padding="12,7" FontSize="12" Margin="0,0,8,0" />
                                 <Button Content="Check App Updates" Command="{Binding CheckAppUpdatesCommand}"
                                         Style="{StaticResource SecondaryButton}" />
                             </StackPanel>
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Button Content="Open Logs Folder" Command="{Binding OpenLogsFolderCommand}"
-                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
+                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
+                                <Button Content="Privacy Policy" Command="{Binding OpenPrivacyPolicyOnlineCommand}"
+                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6"
+                                        ToolTip="{Binding PrivacyPolicyUrl}" />
+                                <Button Content="View Privacy (Offline)" Command="{Binding TogglePrivacyPolicyOfflineCommand}"
+                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
                                 <Button Content="Open-Source Licenses" Command="{Binding ToggleNoticesCommand}"
-                                        Style="{StaticResource SecondaryButton}" />
-                            </StackPanel>
+                                        Style="{StaticResource SecondaryButton}" Margin="0,0,0,6" />
+                            </WrapPanel>
                         </StackPanel>
                     </Grid>
 
+                    <!-- Legal & Personal Use Notice (Policy 10.1) -->
+                    <Border Background="#18000000" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,8">
+                        <StackPanel>
+                            <TextBlock Text="LEGAL &amp; PERSONAL USE NOTICE" Foreground="{StaticResource SubtleTextBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding LegalNoticeText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Offline Privacy Policy Viewer -->
+                    <TextBox Text="{Binding PrivacyPolicyOfflineText, Mode=OneWay}" IsReadOnly="True"
+                             Visibility="{Binding ShowPrivacyPolicyOffline, Converter={StaticResource BoolToVis}}"
+                             Background="#1A000000" Foreground="#D4D8E8" BorderBrush="#24FFFFFF" BorderThickness="1"
+                             FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" MaxHeight="260"
+                             VerticalScrollBarVisibility="Auto" Padding="12" Margin="0,6,0,6" />
+
+                    <!-- Open-Source License Notices Viewer -->
                     <TextBox Text="{Binding ThirdPartyNoticesText, Mode=OneWay}" IsReadOnly="True"
                              Visibility="{Binding ShowNotices, Converter={StaticResource BoolToVis}}"
                              Background="#1A000000" Foreground="#D4D8E8" BorderBrush="#24FFFFFF" BorderThickness="1"
                              FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" MaxHeight="260"
-                             VerticalScrollBarVisibility="Auto" Padding="12" Margin="0,8,0,0" />
+                             VerticalScrollBarVisibility="Auto" Padding="12" Margin="0,6,0,0" />
                 </StackPanel>
             </Border>
         </StackPanel>

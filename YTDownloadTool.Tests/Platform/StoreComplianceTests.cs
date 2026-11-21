@@ -200,6 +200,34 @@ public sealed class StoreComplianceTests : IDisposable
         Assert.Contains("internet connection", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void PrivacyPolicyAndThirdPartyNotices_ExistWithRequiredStoreDisclosures()
+    {
+        var profile = DistributionProfile.ForTesting(isStoreManaged: true, isPackagedMsix: true);
+        Assert.Equal("Tidejar - Video & Stream Saver", profile.AppDisplayName);
+        Assert.Equal("https://github.com/braayounis14/YTDownloadTool/blob/main/PRIVACY.md", profile.PrivacyPolicyUrl);
+
+        // Locate repo root relative to test assembly
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "PRIVACY.md")))
+            dir = dir.Parent;
+
+        Assert.NotNull(dir);
+        var privacyText = File.ReadAllText(Path.Combine(dir!.FullName, "PRIVACY.md"));
+        Assert.Contains("Tidejar", privacyText);
+        Assert.Contains("Baraa Younis", privacyText);
+        Assert.Contains("telemetry", privacyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQLite", privacyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Microsoft Store", privacyText, StringComparison.OrdinalIgnoreCase);
+
+        var noticesText = File.ReadAllText(Path.Combine(dir.FullName, "THIRD_PARTY_NOTICES.txt"));
+        Assert.Contains("Tidejar", noticesText);
+        Assert.Contains("not affiliated with", noticesText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("GPLv3", noticesText);
+        Assert.Contains("yt-dlp", noticesText);
+        Assert.Contains("Deno", noticesText);
+    }
+
     private void SeedFakeBaseline(string folder, params (string Name, string Content)[] files)
     {
         var dir = Path.Combine(_paths.BaselineToolsDirectory, folder);

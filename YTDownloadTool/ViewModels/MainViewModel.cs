@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Downloads;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
@@ -23,6 +24,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ISqliteDatabaseManager _dbManager;
     private readonly IDownloadOrchestrator _orchestrator;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IDistributionProfile _distributionProfile;
     private readonly ILogger<MainViewModel> _logger;
 
     public MainViewModel(
@@ -34,6 +36,7 @@ public sealed partial class MainViewModel : ObservableObject
         ISqliteDatabaseManager dbManager,
         IDownloadOrchestrator orchestrator,
         IAppUpdateService appUpdateService,
+        IDistributionProfile distributionProfile,
         ILogger<MainViewModel> logger)
     {
         Downloads = downloadsViewModel;
@@ -44,9 +47,12 @@ public sealed partial class MainViewModel : ObservableObject
         _dbManager = dbManager;
         _orchestrator = orchestrator;
         _appUpdateService = appUpdateService;
+        _distributionProfile = distributionProfile;
         _logger = logger;
 
-        AppVersionLabel = $"v{_appUpdateService.CurrentVersion}";
+        AppVersionLabel = _distributionProfile.IsStoreManaged
+            ? $"v{_appUpdateService.CurrentVersion} • Microsoft Store"
+            : $"v{_appUpdateService.CurrentVersion}";
 
         Downloads.DownloadCompleted += async (_, _) => await Library.RefreshAsync();
         Settings.SettingsSaved += (_, _) =>
@@ -113,26 +119,34 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             var toolchain = await _toolManager.EnsureToolsReadyAsync(statusProgress);
-            EngineStatusText = $"Engine ready • yt-dlp {toolchain.YtDlpVersion}";
+            EngineStatusText = _distributionProfile.IsStoreManaged
+                ? $"Engine ready (Bundled) • yt-dlp {toolchain.YtDlpVersion}"
+                : $"Engine ready • yt-dlp {toolchain.YtDlpVersion}";
             EngineStatusColor = "#2EA043";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Initial multimedia engine readiness check failed.");
-            EngineStatusText = "Engine needs repair (open Settings)";
+            EngineStatusText = _distributionProfile.IsStoreManaged
+                ? "Bundled engine error (reinstall app)"
+                : "Engine needs repair (open Settings)";
             EngineStatusColor = "#DA3633";
         }
 
         await Settings.RefreshAllAsync();
 
-        // 4. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
-        if (_settingsStore.Current.AutoUpdateTools)
+        // Store builds (Policies 10.2.2, 10.2.3, 10.2.5) perform zero background update checks or binary downloads.
+        if (!_distributionProfile.IsStoreManaged)
         {
-            _ = RunBackgroundToolUpdatesAsync();
-        }
+            // 4. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
+            if (_settingsStore.Current.AutoUpdateTools)
+            {
+                _ = RunBackgroundToolUpdatesAsync();
+            }
 
-        // 5. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
-        _ = _appUpdateService.CheckAndDownloadIfAvailableAsync(isManualCheck: false);
+            // 5. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
+            _ = _appUpdateService.CheckAndDownloadIfAvailableAsync(isManualCheck: false);
+        }
     }
 
     private async Task RunBackgroundToolUpdatesAsync()
