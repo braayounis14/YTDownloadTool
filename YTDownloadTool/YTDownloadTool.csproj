@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
     <StartupObject>YTDownloadTool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Tidejar.ico</ApplicationIcon>
     <AssemblyName>YTDownloadTool</AssemblyName>
     <RootNamespace>YTDownloadTool</RootNamespace>
     <Product>Tidejar - Video &amp; Stream Saver</Product>
