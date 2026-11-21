@@ -120,7 +120,10 @@ public enum DownloadJobState
     Finalizing = 5,
     Completed = 6,
     Cancelled = 7,
-    Failed = 8
+    Failed = 8,
+    Paused = 9,
+    Retrying = 10,
+    InterruptedLivestream = 11
 }
 
 public sealed record DownloadJobRequest(

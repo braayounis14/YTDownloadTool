@@ -13,6 +13,8 @@ public interface IAppPaths
     string SettingsRootDirectory { get; }
     string SettingsFilePath { get; }
     string HistoryFilePath { get; }
+    string DatabaseFilePath { get; }
+    string DatabaseBackupsDirectory { get; }
     string DefaultDownloadsDirectory { get; }
 
     void EnsureDirectoriesExist();
@@ -47,6 +49,8 @@ public sealed class DefaultAppPaths : IAppPaths
         SettingsRootDirectory = Path.Combine(resolvedRoaming, AppFolderName);
         SettingsFilePath = Path.Combine(SettingsRootDirectory, "settings.json");
         HistoryFilePath = Path.Combine(SettingsRootDirectory, "history.json");
+        DatabaseFilePath = Path.Combine(SettingsRootDirectory, "ytdownloadtool.db");
+        DatabaseBackupsDirectory = Path.Combine(SettingsRootDirectory, "Backups");
 
         DefaultDownloadsDirectory = Path.Combine(resolvedVideos, AppFolderName);
     }
@@ -62,6 +66,8 @@ public sealed class DefaultAppPaths : IAppPaths
     public string SettingsRootDirectory { get; }
     public string SettingsFilePath { get; }
     public string HistoryFilePath { get; }
+    public string DatabaseFilePath { get; }
+    public string DatabaseBackupsDirectory { get; }
     public string DefaultDownloadsDirectory { get; }
 
     public void EnsureDirectoriesExist()
@@ -72,5 +78,6 @@ public sealed class DefaultAppPaths : IAppPaths
         Directory.CreateDirectory(TempDownloadsDirectory);
         Directory.CreateDirectory(LogsDirectory);
         Directory.CreateDirectory(SettingsRootDirectory);
+        Directory.CreateDirectory(DatabaseBackupsDirectory);
     }
 }
