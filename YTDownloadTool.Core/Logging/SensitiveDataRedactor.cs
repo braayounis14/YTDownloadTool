@@ -16,6 +16,9 @@ public static partial class SensitiveDataRedactor
     [GeneratedRegex(@"(?i)\b((?:__Secure-)?(?:1PSID|3PSID|SAPISID|APISID|HSID|SSID|SID|LOGIN_INFO)=)[^;\s""']+", RegexOptions.Compiled)]
     private static partial Regex CookiePairRegex();
 
+    [GeneratedRegex(@"([A-Za-z]:[\\/]+Users[\\/]+)[^\\/\s""']+", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex WindowsUserProfilePathRegex();
+
     public static string Redact(string? input)
     {
         if (string.IsNullOrEmpty(input))
@@ -24,6 +27,7 @@ public static partial class SensitiveDataRedactor
         var step1 = HeaderSecretRegex().Replace(input, "$1: [REDACTED]");
         var step2 = BearerTokenRegex().Replace(step1, "$1[REDACTED]");
         var step3 = QuerySecretRegex().Replace(step2, "$1[REDACTED]");
-        return CookiePairRegex().Replace(step3, "$1[REDACTED]");
+        var step4 = CookiePairRegex().Replace(step3, "$1[REDACTED]");
+        return WindowsUserProfilePathRegex().Replace(step4, "$1<REDACTED>");
     }
 }

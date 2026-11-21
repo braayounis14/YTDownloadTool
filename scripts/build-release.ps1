@@ -71,7 +71,8 @@ try {
         (Join-Path $publishDir "BaselineTools\ffmpeg\ffprobe.exe"),
         (Join-Path $publishDir "BaselineTools\ffmpeg\LICENSE.txt"),
         (Join-Path $publishDir "BaselineTools\deno\deno.exe"),
-        (Join-Path $publishDir "BaselineTools\BASELINE_PROVENANCE.txt")
+        (Join-Path $publishDir "BaselineTools\BASELINE_PROVENANCE.txt"),
+        (Join-Path $publishDir "BaselineTools\baseline-checksums.json")
     )
     foreach ($req in $required) {
         if (-not (Test-Path $req)) {

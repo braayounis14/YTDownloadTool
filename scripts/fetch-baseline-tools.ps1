@@ -28,7 +28,8 @@ if (-not $Force -and
     (Test-Path (Join-Path $ytDlpDir "yt-dlp.exe")) -and
     (Test-Path (Join-Path $ffmpegDir "ffmpeg.exe")) -and
     (Test-Path (Join-Path $ffmpegDir "ffprobe.exe")) -and
-    (Test-Path (Join-Path $denoDir "deno.exe"))) {
+    (Test-Path (Join-Path $denoDir "deno.exe")) -and
+    (Test-Path (Join-Path $baselineRoot "baseline-checksums.json"))) {
     Write-Host "BaselineTools already staged. Pass -Force to re-download." -ForegroundColor Green
     exit 0
 }
@@ -192,6 +193,16 @@ SHA-256: $denoExpected
 License: MIT (https://github.com/denoland/deno/blob/main/LICENSE.md)
 "@
     Set-Content -Path (Join-Path $baselineRoot "BASELINE_PROVENANCE.txt") -Value $provenance -Encoding UTF8
+
+    # 6. Write machine-readable upstream archive SHA-256 checksums so ToolManager seeds manifest.json
+    #    with the exact upstream release asset hash (prevents false FFmpeg re-download on first check).
+    $checksumManifest = [ordered]@{
+        ytDlp  = $ytExpected
+        ffmpeg = $ffExpected
+        deno   = $denoExpected
+    }
+    $checksumJson = $checksumManifest | ConvertTo-Json -Depth 2
+    Set-Content -Path (Join-Path $baselineRoot "baseline-checksums.json") -Value $checksumJson -Encoding UTF8
 
     Write-Host "`nBaselineTools staged and verified successfully!" -ForegroundColor Green
     Write-Host "  yt-dlp : $ytVer"

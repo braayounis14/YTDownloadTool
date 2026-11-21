@@ -276,6 +276,16 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
 
         if (initial.IsValid)
         {
+            _logger.LogInformation(
+                "Media integrity verified for '{FileName}': status={Status}, size={SizeBytes}B, duration={DurationSec:F1}s, resolution={Resolution}, codecs={VideoCodec}/{AudioCodec}.",
+                Path.GetFileName(filePath),
+                MediaIntegrityStatus.Verified,
+                initial.FileSizeBytes,
+                initial.DurationSeconds ?? 0,
+                initial.Resolution ?? "none",
+                initial.VideoCodec ?? "none",
+                initial.AudioCodec ?? "none");
+
             return new MediaIntegrityResult(
                 Status: MediaIntegrityStatus.Verified,
                 Message: "Verified healthy via ffprobe.",
@@ -291,6 +301,12 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
         // Cannot repair missing or empty files
         if (initial.FileSizeBytes <= 0 || !File.Exists(filePath))
         {
+            _logger.LogInformation(
+                "Media integrity check flagged '{FileName}' as {Status}: {Issue}",
+                Path.GetFileName(filePath),
+                MediaIntegrityStatus.NeedsAttention,
+                initial.IssueSummary ?? "File is missing or empty.");
+
             return new MediaIntegrityResult(
                 Status: MediaIntegrityStatus.NeedsAttention,
                 Message: initial.IssueSummary ?? "File is missing or empty.",
@@ -304,8 +320,8 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
         }
 
         _logger.LogWarning(
-            "Media integrity check failed for '{FilePath}': {Issue}. Attempting lossless FFmpeg remux repair...",
-            filePath, initial.IssueSummary);
+            "Media integrity check failed for '{FileName}': {Issue}. Attempting lossless FFmpeg remux repair...",
+            Path.GetFileName(filePath), initial.IssueSummary);
 
         var ext = Path.GetExtension(filePath);
         if (string.IsNullOrWhiteSpace(ext))
@@ -335,7 +351,15 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
                 {
                     await ReplaceFileAtomicallySafeAsync(repairedTempPath, filePath, ct).ConfigureAwait(false);
                     var finalSize = File.Exists(filePath) ? new FileInfo(filePath).Length : recheck.FileSizeBytes;
-                    _logger.LogInformation("Successfully repaired '{FilePath}' via lossless FFmpeg remux.", filePath);
+                    _logger.LogInformation(
+                        "Media integrity repaired for '{FileName}': status={Status}, size={SizeBytes}B, duration={DurationSec:F1}s, resolution={Resolution}, codecs={VideoCodec}/{AudioCodec}.",
+                        Path.GetFileName(filePath),
+                        MediaIntegrityStatus.Repaired,
+                        finalSize,
+                        recheck.DurationSeconds ?? 0,
+                        recheck.Resolution ?? "none",
+                        recheck.VideoCodec ?? "none",
+                        recheck.AudioCodec ?? "none");
 
                     return new MediaIntegrityResult(
                         Status: MediaIntegrityStatus.Repaired,
@@ -350,7 +374,9 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
                 }
             }
 
-            _logger.LogWarning("Lossless FFmpeg repair did not produce a verified output for '{FilePath}'; preserving original file.", filePath);
+            _logger.LogWarning(
+                "Lossless FFmpeg repair did not produce a verified output for '{FileName}'; preserving original file (status={Status}).",
+                Path.GetFileName(filePath), MediaIntegrityStatus.NeedsAttention);
             return new MediaIntegrityResult(
                 Status: MediaIntegrityStatus.NeedsAttention,
                 Message: $"{initial.IssueSummary} Lossless repair did not resolve the issue; original file preserved.",
@@ -364,7 +390,10 @@ public sealed class MediaIntegrityService : IMediaIntegrityService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Exception during lossless FFmpeg repair of '{FilePath}'; preserving original file.", filePath);
+            _logger.LogWarning(
+                ex,
+                "Exception during lossless FFmpeg repair of '{FileName}'; preserving original file (status={Status}).",
+                Path.GetFileName(filePath), MediaIntegrityStatus.NeedsAttention);
             return new MediaIntegrityResult(
                 Status: MediaIntegrityStatus.NeedsAttention,
                 Message: $"{initial.IssueSummary} Repair error: {ex.Message}",

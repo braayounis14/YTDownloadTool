@@ -184,6 +184,16 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         }
 
         var refreshed = await _jobRepository.GetNonTerminalJobsAsync(ct).ConfigureAwait(false);
+        if (refreshed.Count > 0)
+        {
+            var queuedCount = refreshed.Count(j => j.Status == DownloadJobState.Queued);
+            var pausedCount = refreshed.Count(j => j.Status == DownloadJobState.Paused);
+            var interruptedLiveCount = refreshed.Count(j => j.Status == DownloadJobState.InterruptedLivestream);
+            _logger.LogInformation(
+                "Startup queue recovery completed: {Queued} queued, {Paused} paused/interrupted VOD, {InterruptedLive} recoverable livestream(s).",
+                queuedCount, pausedCount, interruptedLiveCount);
+        }
+
         if (hasRunnableQueuedJobs)
         {
             SignalScheduler();
@@ -290,6 +300,14 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             throw;
         }
 
+        _logger.LogInformation(
+            "Job {JobId} ({VideoId}) enqueued: mode={Mode}, container={Container}, livestream={IsLive}.",
+            jobId,
+            normalizedReq.VideoId,
+            normalizedReq.LivestreamMode?.ToString() ?? "VOD",
+            normalizedReq.OutputContainer,
+            isLivestream);
+
         EmitProgress(jobId, new DownloadProgressSnapshot(
             JobId: jobId,
             State: DownloadJobState.Queued,
@@ -355,6 +373,9 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         if (updated)
         {
             _diskLedger.Release(jobId);
+            _logger.LogInformation(
+                "Job {JobId} ({VideoId}) paused while queued at {Progress:F1}%.",
+                jobId, job.VideoId, job.ProgressPercent);
             EmitProgress(jobId, new DownloadProgressSnapshot(
                 JobId: jobId,
                 State: DownloadJobState.Paused,
@@ -412,6 +433,8 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             _diskLedger.Release(jobId);
             return false;
         }
+
+        _logger.LogInformation("Job {JobId} ({VideoId}) resumed and re-queued.", jobId, job.VideoId);
 
         EmitProgress(jobId, new DownloadProgressSnapshot(
             JobId: jobId,
@@ -601,6 +624,14 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             _diskLedger.Release(jobId);
             TryDeleteDirectoryWithRetry(jobTempDir);
 
+            _logger.LogInformation(
+                "Job {JobId} ({VideoId}) partial livestream recovered: size={SizeBytes}B, duration={DurationSec:F1}s, integrity={Integrity}.",
+                jobId,
+                req.VideoId,
+                finalSize,
+                integrity.DurationSeconds ?? 0,
+                integrity.Status);
+
             var doneSnap = new DownloadProgressSnapshot(
                 jobId, DownloadJobState.Completed, 100, false, finalSize, finalSize, null, TimeSpan.Zero,
                 integrity.DurationSeconds is > 0 ? TimeSpan.FromSeconds(integrity.DurationSeconds.Value) : null,
@@ -645,6 +676,8 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         await _jobRepository.DeleteJobAsync(jobId, ct).ConfigureAwait(false);
         TryDeleteDirectoryWithRetry(tempDir);
 
+        _logger.LogInformation("Job {JobId} ({VideoId}) discarded.", jobId, job?.VideoId ?? "unknown");
+
         EmitProgress(jobId, new DownloadProgressSnapshot(
             jobId, DownloadJobState.Cancelled, 0, false, null, null, null, null, null,
             "Discarded"));
@@ -680,6 +713,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
                 _jobRepository.UpdateJobStateAsync(jobId, DownloadJobState.Cancelled, clearError: true).GetAwaiter().GetResult();
                 _diskLedger.Release(jobId);
                 TryDeleteDirectoryWithRetry(job.TempDirectory);
+                _logger.LogInformation("Job {JobId} ({VideoId}) cancelled while queued.", jobId, job.VideoId);
                 EmitProgress(jobId, new DownloadProgressSnapshot(
                     jobId, DownloadJobState.Cancelled, 0, false, null, null, null, null, null, "Cancelled"));
                 _progressSubscribers.TryRemove(jobId, out _);
@@ -986,6 +1020,10 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
                     ? "YouTube rate limit"
                     : "Connection interrupted";
 
+                _logger.LogInformation(
+                    "Job {JobId} ({VideoId}) retrying ({Strategy}, attempt {Attempt}/{MaxAttempts}) in {DelaySec:F1}s due to {Category}.",
+                    activeReq.JobId, activeReq.VideoId, directive.Strategy, transientAttempt, directive.MaxAttempts, delay.TotalSeconds, classified.Category);
+
                 await _jobRepository.UpdateJobStateAsync(
                     activeReq.JobId,
                     DownloadJobState.Retrying,
@@ -1016,6 +1054,10 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             {
                 reprobeAttempt++;
                 var delay = directive.ComputeDelay(reprobeAttempt);
+
+                _logger.LogInformation(
+                    "Job {JobId} ({VideoId}) retrying ({Strategy}, attempt {Attempt}/{MaxAttempts}) in {DelaySec:F1}s due to {Category}.",
+                    activeReq.JobId, activeReq.VideoId, directive.Strategy, reprobeAttempt, directive.MaxAttempts, delay.TotalSeconds, classified.Category);
 
                 await _jobRepository.UpdateJobStateAsync(
                     activeReq.JobId,
@@ -1204,6 +1246,14 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             ? TimeSpan.FromSeconds(integrity.DurationSeconds.Value)
             : (activeReq.KnownDurationSeconds is > 0 ? TimeSpan.FromSeconds(activeReq.KnownDurationSeconds.Value) : (TimeSpan?)null);
 
+        _logger.LogInformation(
+            "Job {JobId} ({VideoId}) completed: size={SizeBytes}B, duration={DurationSec:F1}s, integrity={Integrity}.",
+            activeReq.JobId,
+            activeReq.VideoId,
+            finalSize,
+            finalDuration?.TotalSeconds ?? 0,
+            integrity.Status);
+
         Report(runtime, new DownloadProgressSnapshot(
             activeReq.JobId, DownloadJobState.Completed, 100, false, finalSize > 0 ? finalSize : null,
             finalSize > 0 ? finalSize : null, null, TimeSpan.Zero,
@@ -1338,6 +1388,9 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             {
                 transientAttempt++;
                 var delay = directive.ComputeDelay(transientAttempt);
+                _logger.LogInformation(
+                    "Job {JobId} ({VideoId}) livestream retrying ({Strategy}, attempt {Attempt}/{MaxAttempts}) in {DelaySec:F1}s due to {Category}.",
+                    activeReq.JobId, activeReq.VideoId, directive.Strategy, transientAttempt, directive.MaxAttempts, delay.TotalSeconds, classified.Category);
                 await WaitForRetryDelayAsync(
                     runtime, delay, 0, lastDownloadedBytes, null,
                     transientAttempt, directive.MaxAttempts,
@@ -1350,6 +1403,9 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             {
                 reprobeAttempt++;
                 var delay = directive.ComputeDelay(reprobeAttempt);
+                _logger.LogInformation(
+                    "Job {JobId} ({VideoId}) livestream retrying ({Strategy}, attempt {Attempt}/{MaxAttempts}) in {DelaySec:F1}s due to {Category}.",
+                    activeReq.JobId, activeReq.VideoId, directive.Strategy, reprobeAttempt, directive.MaxAttempts, delay.TotalSeconds, classified.Category);
                 await WaitForRetryDelayAsync(
                     runtime, delay, 0, lastDownloadedBytes, null,
                     reprobeAttempt, directive.MaxAttempts,
@@ -1591,6 +1647,16 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             ? TimeSpan.FromSeconds(integrity.DurationSeconds.Value)
             : lastRecordedDuration;
 
+        _logger.LogInformation(
+            "Job {JobId} ({VideoId}) livestream completed ({Label}): mode={Mode}, size={SizeBytes}B, duration={DurationSec:F1}s, integrity={Integrity}.",
+            activeReq.JobId,
+            activeReq.VideoId,
+            completionLabel,
+            mode,
+            finalSize,
+            resolvedDuration?.TotalSeconds ?? 0,
+            integrity.Status);
+
         Report(runtime, new DownloadProgressSnapshot(
             activeReq.JobId, DownloadJobState.Completed, 100, false, finalSize, finalSize, null, TimeSpan.Zero,
             resolvedDuration, completionLabel, OutputFilePath: finalOutputPath, NonFatalNotice: latestNotice,
@@ -1703,7 +1769,7 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Post-download integrity check failed unexpectedly for '{File}'.", outputFilePath);
+            _logger.LogWarning(ex, "Post-download integrity check failed unexpectedly for '{FileName}'.", Path.GetFileName(outputFilePath));
             var size = File.Exists(outputFilePath) ? new FileInfo(outputFilePath).Length : 0;
             return new MediaIntegrityResult(
                 MediaIntegrityStatus.Unverified,
@@ -1727,6 +1793,10 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             lastErrorMessage: "Paused — ready to resume",
             ct: CancellationToken.None).ConfigureAwait(false);
 
+        _logger.LogInformation(
+            "Job {JobId} ({VideoId}) paused at {Progress:F1}%.",
+            runtime.Request.JobId, runtime.Request.VideoId, pct);
+
         Report(runtime, new DownloadProgressSnapshot(
             runtime.Request.JobId,
             DownloadJobState.Paused,
@@ -1743,6 +1813,8 @@ public sealed class DownloadOrchestrator : IDownloadOrchestrator
             ct: CancellationToken.None).ConfigureAwait(false);
 
         TryDeleteDirectoryWithRetry(jobTempDir);
+
+        _logger.LogInformation("Job {JobId} ({VideoId}) cancelled.", runtime.Request.JobId, runtime.Request.VideoId);
 
         Report(runtime, new DownloadProgressSnapshot(
             runtime.Request.JobId,

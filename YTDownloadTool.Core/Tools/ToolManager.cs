@@ -501,7 +501,10 @@ public sealed class ToolManager : IToolManager
         CopyDirectory(baselineDir, destDir);
 
         var mainExe = GetMainExecutablePath(kind, destDir);
-        var exeSha = File.Exists(mainExe) ? await ChecksumVerifier.ComputeFileSha256Async(mainExe, ct) : string.Empty;
+        var baselineArchiveSha = TryReadBaselineArchiveSha256(kind);
+        var recordedSha = !string.IsNullOrWhiteSpace(baselineArchiveSha)
+            ? baselineArchiveSha
+            : (File.Exists(mainExe) ? await ChecksumVerifier.ComputeFileSha256Async(mainExe, ct) : string.Empty);
 
         manifest.Tools[kind] = new ToolManifestEntry
         {
@@ -510,7 +513,7 @@ public sealed class ToolManager : IToolManager
                 ? existing.ActiveVersion
                 : null,
             Channel = kind == ToolKind.YtDlp ? _settingsStore.Current.YtDlpChannel : "stable",
-            Sha256 = exeSha,
+            Sha256 = recordedSha,
             SourceUrl = "bundled-baseline",
             InstalledAtUtc = DateTimeOffset.UtcNow,
             LastCheckedUtc = null
@@ -518,6 +521,49 @@ public sealed class ToolManager : IToolManager
 
         _logger.LogInformation("Seeded {Tool} ({Version}) from bundled baseline.", kind, probed.Value.Version);
         return (mainExe, probed.Value.Version);
+    }
+
+    private string? TryReadBaselineArchiveSha256(ToolKind kind)
+    {
+        var checksumsPath = Path.Combine(_paths.BaselineToolsDirectory, "baseline-checksums.json");
+        if (!File.Exists(checksumsPath))
+            return null;
+
+        try
+        {
+            var json = File.ReadAllText(checksumsPath);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+
+            string[] candidateKeys = kind switch
+            {
+                ToolKind.YtDlp => ["ytDlp", "yt-dlp", "YtDlp"],
+                ToolKind.FFmpeg => ["ffmpeg", "FFmpeg"],
+                ToolKind.Deno => ["deno", "Deno"],
+                _ => []
+            };
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (!candidateKeys.Any(k => string.Equals(prop.Name, k, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                var value = prop.Value.GetString()?.Trim().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(value)
+                    && value.Length == 64
+                    && value.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                {
+                    return value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not parse baseline-checksums.json; falling back to executable hash.");
+        }
+
+        return null;
     }
 
     private async Task<(string ExePath, string Version)?> TryVerifyManagedVersionAsync(

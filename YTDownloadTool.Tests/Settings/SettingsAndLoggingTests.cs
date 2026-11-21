@@ -86,6 +86,15 @@ public sealed class SettingsAndLoggingTests : IDisposable
         Assert.DoesNotContain("xyz999", redacted);
         Assert.DoesNotContain("sig=secret", redacted);
         Assert.Contains("[REDACTED]", redacted);
+
+        // Windows user profile paths (single backslash, JSON-escaped double backslash, forward slash) must be scrubbed
+        const string pathSample = @"Saved C:\Users\JaneDoe\Videos\clip.mp4 and json ""C:\\Users\\JaneDoe\\AppData\\Local"" and D:/Users/JohnAdmin/Temp";
+        var redactedPaths = SensitiveDataRedactor.Redact(pathSample);
+        Assert.DoesNotContain("JaneDoe", redactedPaths);
+        Assert.DoesNotContain("JohnAdmin", redactedPaths);
+        Assert.Contains(@"C:\Users\<REDACTED>\Videos\clip.mp4", redactedPaths);
+        Assert.Contains(@"C:\\Users\\<REDACTED>\\AppData\\Local", redactedPaths);
+        Assert.Contains("D:/Users/<REDACTED>/Temp", redactedPaths);
     }
 
     [Fact]

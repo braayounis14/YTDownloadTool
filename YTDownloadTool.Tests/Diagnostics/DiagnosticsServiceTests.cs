@@ -93,10 +93,12 @@ public sealed class DiagnosticsServiceTests : IDisposable
         await settings.LoadAsync();
         var ledger = new DiskSpaceReservationLedger(_ => 500L * 1024 * 1024 * 1024);
 
-        // Seed log file containing sensitive auth/cookie/query secrets
+        // Seed log file containing sensitive auth/cookie/query secrets AND Windows user profile paths
         var logPath = Path.Combine(_paths.LogsDirectory, "ytdownloadtool-20261121.log");
         await File.WriteAllTextAsync(logPath,
             "2026-11-21 INFO Startup ok\r\n" +
+            "2026-11-21 INFO Output saved to C:\\Users\\AliceSmith\\Videos\\YTDownloadTool\\clip.mp4\r\n" +
+            "2026-11-21 INFO Temp dir D:/Users/BobJones/AppData/Local/YTDownloadToolData/Temp\r\n" +
             "2026-11-21 WARN Cookie: SAPISID=ultra_secret_cookie_val; Authorization: Bearer top_secret_jwt_123\r\n" +
             "2026-11-21 ERR GET https://rr1.googlevideo.com/videoplayback?id=1&sig=hidden_sig_999&po_token=hidden_po_888\r\n");
 
@@ -151,6 +153,16 @@ public sealed class DiagnosticsServiceTests : IDisposable
             Assert.DoesNotContain("secret_bearer_", text);
             Assert.DoesNotContain("cookie_val_", text);
             Assert.DoesNotContain("secret_tok_", text);
+            Assert.DoesNotContain("AliceSmith", text);
+            Assert.DoesNotContain("BobJones", text);
+        }
+
+        // Verify Windows user profile paths are scrubbed to <REDACTED> in exported logs
+        using (var logReader = new StreamReader(archive.GetEntry("logs/ytdownloadtool-20261121.log")!.Open()))
+        {
+            var exportedLog = await logReader.ReadToEndAsync();
+            Assert.Contains(@"C:\Users\<REDACTED>\Videos\YTDownloadTool\clip.mp4", exportedLog);
+            Assert.Contains("D:/Users/<REDACTED>/AppData/Local/YTDownloadToolData/Temp", exportedLog);
         }
 
         // Verify failed-jobs.json has exactly 25 entries
