@@ -1,53 +1,62 @@
-# YTDownloadTool
+# Tidejar — Video & Stream Saver
 
-A production-ready Windows desktop (.NET 10 WPF) application for downloading YouTube videos and recording YouTube livestreams, with fully automated multimedia engine management and delta auto-updates.
+A modern, privacy-first Windows desktop application (.NET 10 WPF) for saving online videos, audio tracks, and live broadcasts for offline personal viewing — featuring a persistent SQLite download queue, livestream recording modes, media integrity verification, and an all-in-one bundled multimedia engine.
 
-## Key Features
+### Download for Windows
 
-- **Dynamic Format Discovery:** Probes actual available resolutions (360p–2160p+), frame rates, HDR, codecs, and audio-only formats directly from YouTube rather than hardcoded lists.
+- **GitHub Desktop Edition (Installer & Portable ZIP):** [**Download Latest Release for Windows (x64)**](https://github.com/braayounis14/YTDownloadTool/releases/latest)
+- **Microsoft Store Edition (MSIX):** Available as a packaged Windows app (`BaraaYounis.Tidejar`) with a bundled, read-only multimedia engine and updates managed exclusively by the Microsoft Store.
+
+> Requires Windows 10 (1809+) or Windows 11 (64-bit). Self-contained — no separate `.NET`, Python, or FFmpeg installation required.
+
+---
+
+## Key Features (v1.1.0)
+
+- **Real Format Inspection & Video/Audio Saving:** Probes available video resolutions (up to 4K/HDR and high frame rates), codecs, and audio-only streams directly before download, with container selection (`MP4`, `MKV`, `WEBM`, `M4A`, `MP3`, `OPUS`).
 - **Livestream Recording (Modes A, B & C):**
-  - **Mode A (Record from now until end):** Starts from the current live edge using crash-safe MPEG-TS/MKV recording with automatic reconnection and clean `Stop & Save` finalization.
-  - **Mode B (From start until end — DVR):** Uses `yt-dlp --live-from-start` when YouTube exposes DVR segments, automatically warning when DVR is unavailable or capped.
-  - **Mode C (From start, stop near live edge):** Tracks all concurrent DASH streams via `ModeCLiveEdgeWatchdog`, stopping gracefully at a configurable live-edge margin (15s / **30s default** / 60s / 120s) via `CTRL_C_EVENT` so `yt-dlp`/FFmpeg merges cleanly into a playable file.
-- **Zero-Manual-Setup Multimedia Engine (Hybrid Option C):**
-  - Bundles verified baseline `yt-dlp.exe`, `ffmpeg.exe` + `ffprobe.exe` (`yt-dlp/FFmpeg-Builds` GPL-shared), and `deno.exe` (required by `yt-dlp >= 2025.11.12` EJS).
-  - Updates each tool independently over allowlisted HTTPS GitHub releases with mandatory SHA-256 verification, Zip-Slip protection, pre-activation health probes, atomic manifest swap, rollback, and baseline self-healing.
-- **Single-Click Windows Installer & Delta Updates:**
-  - Self-contained `win-x64` `.NET 10` (ReadyToRun) packaged via **Velopack** (`YTDownloadTool-win-Setup.exe`) — no `.NET`, Python, FFmpeg, or administrator/UAC prompt required.
-  - Background delta app updates from GitHub Releases (`braayounis14/YTDownloadTool`) with 12-hour rate-limit throttling and silent HTTP 403 handling.
-  - Clean uninstallation removes managed tool caches (`%LocalAppData%\YTDownloadToolData`) while **never touching user downloaded videos**.
+  - **Mode A — Record from now until end:** Crash-safe recording from the current live edge with clean **Stop & Save** finalization.
+  - **Mode B — Record from start until end (DVR):** Captures from the beginning of DVR-enabled broadcasts and warns automatically if DVR is unavailable or capped.
+  - **Mode C — Record from start, stop near live edge:** Captures from stream start and stops gracefully at a configurable live-edge margin (15s / 30s default / 60s / 120s) so video and audio merge into a cleanly playable file.
+- **Persistent SQLite Queue & Crash Recovery:**
+  - Local SQLite database (WAL mode) with transactional schema migrations and automatic pre-migration backups.
+  - **Pause & Resume** for VOD downloads (`--continue`), queue reordering (`TOP` / `▲` / `▼`), automatic restoration of interrupted downloads across restarts, and **Recover & Save Partial** for interrupted livestreams.
+  - Concurrent disk-space reservation ledger to prevent mid-download storage exhaustion.
+- **Per-Download Speed Limiting & Concurrency Control:** Apply bandwidth caps per active download (`--limit-rate`) and adjust maximum concurrent jobs in Settings.
+- **Media Integrity Verification & Lossless Repair:** Inspect saved files in the Library with `ffprobe` (video/audio streams, codecs, duration, container health) and run lossless FFmpeg remux repair when metadata needs fixing.
+- **Local Diagnostics & Redacted Support Export:** Monitor SQLite health and reclaim unused temporary staging folders safely, or opt in to export a local `.zip` diagnostic bundle with tokens, cookies, and Windows user profile paths automatically redacted.
 
-## Repository Layout
+---
 
-- `YTDownloadTool.slnx` — Unified .NET 10 solution
-- `YTDownloadTool.Core/` — Core domain engine (`Process/`, `Tools/`, `Downloads/`, `Livestream/`, `Settings/`, `Logging/`, `Paths/`)
-- `YTDownloadTool/` — WPF desktop client (`Program.cs`, `App.xaml.cs`, `MainWindow`, `Views/`, `ViewModels/`, `Services/`, `Converters/`)
-- `YTDownloadTool.Tests/` — Automated xUnit unit & Windows process integration test suite
-- `scripts/fetch-baseline-tools.ps1` — Downloads, SHA-256 verifies, and stages pinned `BaselineTools/`
-- `scripts/build-release.ps1` — Full local test → publish → Velopack packaging pipeline
-- `.github/workflows/` — Automated CI (`ci.yml`) and tagged GitHub Release packaging (`release.yml`)
-- `THIRD_PARTY_NOTICES.txt` — Open-source licenses & GPLv3 FFmpeg source compliance notices
+## Windows Editions
 
-## Building & Testing Locally
+| Edition | Packaging | Updates & Multimedia Engine |
+| --- | --- | --- |
+| **Microsoft Store** | Signed MSIX (`BaraaYounis.Tidejar`) | Bundled read-only engine (`yt-dlp`, `FFmpeg`/`FFprobe`, `Deno`); zero runtime binary downloads; all updates delivered by the Microsoft Store. |
+| **GitHub Desktop** | Self-contained Velopack `Setup.exe` & Portable `.zip` | Optional GitHub Releases delta app updates and SHA-256-verified engine updates with automatic rollback & self-healing. |
+
+---
+
+## Privacy, Licenses & Legal Notice
+
+- **Privacy Policy:** Tidejar collects **zero** telemetry, analytics, or crash beacons and requires no user account. Read the full policy in [PRIVACY.md](PRIVACY.md).
+- **Third-Party Software & Open-Source Licenses:** Tidejar invokes standalone third-party command-line utilities (`FFmpeg`/`FFprobe` via `yt-dlp/FFmpeg-Builds` under **GPLv3**, `yt-dlp` under The Unlicense, and `Deno` under MIT) strictly out-of-process. Full license texts, attribution, and GPLv3 corresponding source details are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+- **Independent Utility & Personal Use Disclaimer:** Tidejar is an independent third-party desktop utility published by Baraa Younis and is not affiliated with, endorsed by, or sponsored by YouTube or Google LLC. It is intended solely for saving content that you own, have explicit permission to download, or are legally permitted to archive for personal, non-commercial offline use. Users are solely responsible for complying with applicable copyright laws and the terms of service of any website or media platform they access.
+
+---
+
+## Building from Source
+
+Requires the **.NET 10 SDK** on Windows (`x64`):
 
 ```powershell
-# Build & run all automated tests
+# Build and run the automated test suite (Desktop profile)
 dotnet build YTDownloadTool.slnx -c Release
-dotnet test YTDownloadTool.slnx -c Release
+dotnet test YTDownloadTool.slnx -c Release --no-build
 
-# Stage verified baseline multimedia tools (yt-dlp, FFmpeg/FFprobe, Deno)
-.\scripts\fetch-baseline-tools.ps1
-
-# Build full self-contained win-x64 Velopack installer & release feed
-.\scripts\build-release.ps1 -Version "1.0.0"
+# Build and test the Microsoft Store (MSIX) profile
+dotnet build YTDownloadTool.slnx -c Release -p:IsStoreBuild=true
+dotnet test YTDownloadTool.slnx -c Release --no-build -p:IsStoreBuild=true
 ```
 
-## Releasing a New Application Version
-
-1. Commit and push verified changes to `main`.
-2. Tag and push a semantic version tag (e.g., `git tag v1.0.1 && git push origin v1.0.1`), or run `.\scripts\build-release.ps1 -Version "1.0.1"` locally and upload `artifacts\Releases\*` to a GitHub Release.
-3. Installed clients automatically discover the update on their next throttled background check (or manual check in Settings), download the binary delta patch, and prompt to restart safely once no downloads are active.
-
-## Third-Party Software & Licenses
-
-See [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) for complete licensing, attribution, and GPLv3 corresponding source information for FFmpeg (`yt-dlp/FFmpeg-Builds`), `yt-dlp` (The Unlicense), `Deno` (MIT), and `.NET`/NuGet packages.
+Packaging scripts for staging verified baseline tools (`scripts/fetch-baseline-tools.ps1`), building the GitHub Desktop installer (`scripts/build-release.ps1`), and building the Microsoft Store MSIX package (`scripts/build-msix.ps1`) are located in `scripts/`.
