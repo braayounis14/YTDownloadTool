@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using YTDownloadTool.Core.Diagnostics;
 using YTDownloadTool.Core.Downloads;
 using YTDownloadTool.Core.Logging;
 using YTDownloadTool.Core.Paths;
@@ -101,6 +102,7 @@ public partial class App : Application
         services.AddSingleton<OutputPathGuard>();
         services.AddSingleton<IMediaProbeService, MediaProbeService>();
         services.AddSingleton<IDownloadOrchestrator, DownloadOrchestrator>();
+        services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
         services.AddSingleton<IAppUpdateService, AppUpdateService>();
 
         services.AddSingleton<DownloadsViewModel>();
