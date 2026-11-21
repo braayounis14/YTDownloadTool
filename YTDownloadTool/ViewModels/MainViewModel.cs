@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using YTDownloadTool.Core.Downloads;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Storage;
 using YTDownloadTool.Core.Tools;
@@ -23,6 +24,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ISqliteDatabaseManager _dbManager;
     private readonly IDownloadOrchestrator _orchestrator;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IDistributionProfile _distributionProfile;
     private readonly ILogger<MainViewModel> _logger;
 
     public MainViewModel(
@@ -34,6 +36,7 @@ public sealed partial class MainViewModel : ObservableObject
         ISqliteDatabaseManager dbManager,
         IDownloadOrchestrator orchestrator,
         IAppUpdateService appUpdateService,
+        IDistributionProfile distributionProfile,
         ILogger<MainViewModel> logger)
     {
         Downloads = downloadsViewModel;
@@ -44,9 +47,12 @@ public sealed partial class MainViewModel : ObservableObject
         _dbManager = dbManager;
         _orchestrator = orchestrator;
         _appUpdateService = appUpdateService;
+        _distributionProfile = distributionProfile;
         _logger = logger;
 
-        AppVersionLabel = $"v{_appUpdateService.CurrentVersion}";
+        AppVersionLabel = _distributionProfile.IsStoreManaged
+            ? $"v{_appUpdateService.CurrentVersion} • Microsoft Store"
+            : $"v{_appUpdateService.CurrentVersion}";
 
         Downloads.DownloadCompleted += async (_, _) => await Library.RefreshAsync();
         Settings.SettingsSaved += (_, _) =>
@@ -72,10 +78,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private AppNavigationTab _selectedTab = AppNavigationTab.Downloads;
     [ObservableProperty] private string _engineStatusText = "Checking engine...";
+    [ObservableProperty] private string _engineVersionSubtext = string.Empty;
     [ObservableProperty] private string _engineStatusColor = "#D29922";
     [ObservableProperty] private bool _isAppUpdateReady;
     [ObservableProperty] private string _appUpdateBannerText = string.Empty;
     [ObservableProperty] private string? _databaseRecoveryNotice;
+
+    public string EngineStatusTooltip => string.IsNullOrWhiteSpace(EngineVersionSubtext)
+        ? EngineStatusText
+        : $"{EngineStatusText} • {EngineVersionSubtext}";
+
+    partial void OnEngineStatusTextChanged(string value) => OnPropertyChanged(nameof(EngineStatusTooltip));
+    partial void OnEngineVersionSubtextChanged(string value) => OnPropertyChanged(nameof(EngineStatusTooltip));
 
     public bool IsDownloadsSelected => SelectedTab == AppNavigationTab.Downloads;
     public bool IsLibrarySelected => SelectedTab == AppNavigationTab.Library;
@@ -109,30 +123,46 @@ public sealed partial class MainViewModel : ObservableObject
         await Library.RefreshAsync();
 
         // 3. Ensure multimedia toolchain (yt-dlp, FFmpeg, Deno) is healthy / seeded / ready
-        var statusProgress = new Progress<string>(msg => EngineStatusText = msg);
+        var statusProgress = new Progress<string>(msg =>
+        {
+            EngineStatusText = msg;
+            EngineVersionSubtext = string.Empty;
+        });
         try
         {
             var toolchain = await _toolManager.EnsureToolsReadyAsync(statusProgress);
-            EngineStatusText = $"Engine ready • yt-dlp {toolchain.YtDlpVersion}";
+            EngineStatusText = _distributionProfile.IsStoreManaged
+                ? "Engine ready (Bundled)"
+                : "Engine ready";
+            EngineVersionSubtext = $"yt-dlp {toolchain.YtDlpVersion}";
             EngineStatusColor = "#2EA043";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Initial multimedia engine readiness check failed.");
-            EngineStatusText = "Engine needs repair (open Settings)";
+            EngineStatusText = _distributionProfile.IsStoreManaged
+                ? "Bundled engine error"
+                : "Engine needs repair";
+            EngineVersionSubtext = _distributionProfile.IsStoreManaged
+                ? "Reinstall app to repair"
+                : "Open Settings to repair";
             EngineStatusColor = "#DA3633";
         }
 
         await Settings.RefreshAllAsync();
 
-        // 4. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
-        if (_settingsStore.Current.AutoUpdateTools)
+        // Store builds (Policies 10.2.2, 10.2.3, 10.2.5) perform zero background update checks or binary downloads.
+        if (!_distributionProfile.IsStoreManaged)
         {
-            _ = RunBackgroundToolUpdatesAsync();
-        }
+            // 4. Background independent tool update check (respects per-tool cadences: yt-dlp 24h, FFmpeg/Deno 30d)
+            if (_settingsStore.Current.AutoUpdateTools)
+            {
+                _ = RunBackgroundToolUpdatesAsync();
+            }
 
-        // 5. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
-        _ = _appUpdateService.CheckAndDownloadIfAvailableAsync(isManualCheck: false);
+            // 5. Background rate-limited Velopack app update check (throttled >= 12h, ignores HTTP 403 silently)
+            _ = _appUpdateService.CheckAndDownloadIfAvailableAsync(isManualCheck: false);
+        }
     }
 
     private async Task RunBackgroundToolUpdatesAsync()
@@ -143,10 +173,12 @@ public sealed partial class MainViewModel : ObservableObject
             var ytDlpCheck = checks.FirstOrDefault(c => c.Kind == ToolKind.YtDlp);
             if (ytDlpCheck?.UpdateAvailable == true && _orchestrator.ActiveJobCount == 0)
             {
-                EngineStatusText = $"Updating yt-dlp → {ytDlpCheck.LatestVersion}...";
+                EngineStatusText = "Updating yt-dlp...";
+                EngineVersionSubtext = $"→ {ytDlpCheck.LatestVersion}";
                 EngineStatusColor = "#00A8E8";
                 var updated = await _toolManager.UpdateToolAsync(ToolKind.YtDlp);
-                EngineStatusText = $"Engine ready • yt-dlp {updated.InstalledVersion}";
+                EngineStatusText = "Engine ready";
+                EngineVersionSubtext = $"yt-dlp {updated.InstalledVersion}";
                 EngineStatusColor = "#2EA043";
                 await Settings.RefreshToolStatusesAsync();
             }

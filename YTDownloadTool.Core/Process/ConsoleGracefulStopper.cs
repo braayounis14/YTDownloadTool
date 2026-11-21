@@ -8,8 +8,8 @@ namespace YTDownloadTool.Core.Process;
 ///
 /// Works safely from a consoleless WPF WinExe process via a serialized AttachConsole ->
 /// SetConsoleCtrlHandler(NULL, TRUE) -> GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) -> FreeConsole
-/// sequence, and falls back to an isolated helper process when invoked from a console
-/// host (such as dotnet test) so the parent host's own console is never disrupted.
+/// sequence, and delegates to the packaged WinExe helper when invoked from a console host
+/// (such as dotnet test) so the parent host's own console is never disrupted.
 /// </summary>
 public static class ConsoleGracefulStopper
 {
@@ -61,13 +61,13 @@ public static class ConsoleGracefulStopper
         }
 
         // If the parent host ALREADY has a console (e.g., dotnet test / console host),
-        // avoid calling FreeConsole() on the host; instead signal via an isolated helper process.
+        // avoid calling FreeConsole() on the host; instead signal via the WinExe helper process.
         if (!string.IsNullOrWhiteSpace(winExeSignalerPath) && File.Exists(winExeSignalerPath))
         {
             return await InvokeWinExeSignalerAsync(winExeSignalerPath, targetProcessId, ct);
         }
 
-        return await InvokeIsolatedPowerShellSignalerAsync(targetProcessId, ct);
+        return false;
     }
 
     private static bool ProcessHasConsole()
@@ -130,71 +130,6 @@ public static class ConsoleGracefulStopper
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-            await helper.WaitForExitAsync(timeoutCts.Token);
-            return helper.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static async Task<bool> InvokeIsolatedPowerShellSignalerAsync(int targetPid, CancellationToken ct)
-    {
-        // Used only when invoked from a console host (such as xUnit/dotnet test) without a WinExe signaler.
-        // CreateNoWindow = true isolates the helper into its own console before it calls FreeConsole() + AttachConsole(targetPid).
-        var script = $$"""
-            $code = @"
-            using System;
-            using System.Runtime.InteropServices;
-            using System.Threading;
-            public static class CtrlCSender {
-                [DllImport("kernel32.dll", SetLastError = true)] public static extern bool AttachConsole(uint dwProcessId);
-                [DllImport("kernel32.dll", SetLastError = true)] public static extern bool FreeConsole();
-                [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
-                [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GenerateConsoleCtrlEvent(uint ctrlEvent, uint processGroupId);
-                public static int Send(uint pid) {
-                    FreeConsole();
-                    if (!AttachConsole(pid)) return 2;
-                    try {
-                        SetConsoleCtrlHandler(IntPtr.Zero, true);
-                        bool ok = GenerateConsoleCtrlEvent(0, 0);
-                        if (ok) Thread.Sleep(200);
-                        return ok ? 0 : 3;
-                    } finally {
-                        FreeConsole();
-                        SetConsoleCtrlHandler(IntPtr.Zero, false);
-                    }
-                }
-            }
-            "@
-            Add-Type -TypeDefinition $code
-            exit ([CtrlCSender]::Send({{targetPid}}))
-            """;
-
-        var encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script));
-
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-EncodedCommand");
-            psi.ArgumentList.Add(encoded);
-
-            using var helper = System.Diagnostics.Process.Start(psi);
-            if (helper is null)
-                return false;
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(12));
             await helper.WaitForExitAsync(timeoutCts.Token);
             return helper.ExitCode == 0;
         }

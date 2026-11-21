@@ -65,6 +65,7 @@ try {
     # Verify required published artifacts & license compliance files
     $required = @(
         (Join-Path $publishDir "YTDownloadTool.exe"),
+        (Join-Path $publishDir "PRIVACY.md"),
         (Join-Path $publishDir "THIRD_PARTY_NOTICES.txt"),
         (Join-Path $publishDir "BaselineTools\yt-dlp\yt-dlp.exe"),
         (Join-Path $publishDir "BaselineTools\ffmpeg\ffmpeg.exe"),

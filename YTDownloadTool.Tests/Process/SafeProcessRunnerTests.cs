@@ -95,10 +95,32 @@ public sealed class SafeProcessRunnerTests
         Assert.Equal(0, result.ExitCode);
     }
 
+    private static string ResolveBuiltWinExePath()
+    {
+        var primaryConfig =
+#if DEBUG
+            "Debug";
+#else
+            "Release";
+#endif
+        var secondaryConfig = primaryConfig == "Debug" ? "Release" : "Debug";
+
+        var primaryPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", primaryConfig, "net10.0-windows", "YTDownloadTool.exe"));
+        if (File.Exists(primaryPath))
+            return primaryPath;
+
+        return Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", secondaryConfig, "net10.0-windows", "YTDownloadTool.exe"));
+    }
+
     [Fact]
     public async Task RunAsync_CtrlCStrategy_DeliversRealCtrlCEventOnWindows()
     {
-        using var runner = new SafeProcessRunner(NullLogger<SafeProcessRunner>.Instance);
+        var candidateExe = ResolveBuiltWinExePath();
+        Assert.True(File.Exists(candidateExe), $"Expected built YTDownloadTool.exe at {candidateExe}");
+
+        using var runner = new SafeProcessRunner(NullLogger<SafeProcessRunner>.Instance, winExeSignalerPath: candidateExe);
         using var cts = new CancellationTokenSource();
 
         // Real Windows console child (C# Console.CancelKeyPress inside PowerShell) that traps CTRL_C_EVENT
@@ -206,14 +228,7 @@ public sealed class SafeProcessRunnerTests
     public async Task RunAsync_WinExeInternalSignaler_DeliversRealCtrlCEvent()
     {
         // Locate built YTDownloadTool.exe relative to test output to verify the exact production WinExe signaler path.
-        var candidateExe = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", "Debug", "net10.0-windows", "YTDownloadTool.exe"));
-        if (!File.Exists(candidateExe))
-        {
-            candidateExe = Path.GetFullPath(Path.Combine(
-                AppContext.BaseDirectory, "..", "..", "..", "..", "YTDownloadTool", "bin", "Release", "net10.0-windows", "YTDownloadTool.exe"));
-        }
-
+        var candidateExe = ResolveBuiltWinExePath();
         Assert.True(File.Exists(candidateExe), $"Expected built YTDownloadTool.exe at {candidateExe}");
 
         using var runner = new SafeProcessRunner(NullLogger<SafeProcessRunner>.Instance, winExeSignalerPath: candidateExe);

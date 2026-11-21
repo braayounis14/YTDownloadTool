@@ -8,10 +8,13 @@
     <UseWPF>true</UseWPF>
     <StartupObject>YTDownloadTool.Program</StartupObject>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Tidejar.ico</ApplicationIcon>
     <AssemblyName>YTDownloadTool</AssemblyName>
     <RootNamespace>YTDownloadTool</RootNamespace>
-    <Product>YTDownloadTool</Product>
-    <Description>Windows desktop YouTube video downloader and livestream recorder</Description>
+    <Product>Tidejar - Video &amp; Stream Saver</Product>
+    <Company>Baraa Younis</Company>
+    <Authors>Baraa Younis</Authors>
+    <Description>Tidejar — Windows desktop video and livestream saver</Description>
     <Version>1.1.0</Version>
     <AssemblyVersion>1.1.0.0</AssemblyVersion>
     <FileVersion>1.1.0.0</FileVersion>
@@ -26,11 +29,15 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
-    <PackageReference Include="Velopack" Version="1.2.161" />
+    <!-- Policy 10.2.5: Velopack self-updater is excluded completely from Microsoft Store MSIX builds -->
+    <PackageReference Include="Velopack" Version="1.2.161" Condition="'$(IsStoreBuild)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="..\THIRD_PARTY_NOTICES.txt" Link="THIRD_PARTY_NOTICES.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\PRIVACY.md" Link="PRIVACY.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

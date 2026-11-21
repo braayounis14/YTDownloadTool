@@ -45,11 +45,42 @@ public static class ShellHelper
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return;
 
-        Process.Start(new ProcessStartInfo
+        try
         {
-            FileName = filePath,
-            UseShellExecute = true
-        });
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = filePath,
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            // Ignore shell association errors safely
+        }
+    }
+
+    public static bool OpenUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)
+            || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = uri.AbsoluteUri,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static string? BrowseForFolder(string? initialDirectory, string title = "Select Download Folder")

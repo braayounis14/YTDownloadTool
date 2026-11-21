@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <IsStoreBuild Condition="'$(IsStoreBuild)' == ''">false</IsStoreBuild>
+    <DefineConstants Condition="'$(IsStoreBuild)' == 'true'">$(DefineConstants);STORE_MSIX</DefineConstants>
+  </PropertyGroup>
+</Project>

@@ -1,6 +1,9 @@
 using System.IO;
+#if !STORE_MSIX
 using Velopack;
+#endif
 using YTDownloadTool.Core.Paths;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Process;
 
 namespace YTDownloadTool;
@@ -16,10 +19,16 @@ public static class Program
             return signalExitCode;
         }
 
-        // 2. Velopack install / update / uninstall lifecycle hooks — MUST run first
-        VelopackApp.Build()
-            .OnBeforeUninstallFastCallback(_ => CleanupManagedDataOnUninstall())
-            .Run();
+#if !STORE_MSIX
+        // 2. Velopack install / update / uninstall lifecycle hooks (GitHub desktop build only;
+        //    also guarded at runtime against MSIX package execution as defense-in-depth for Policy 10.2.5)
+        if (!PackageIdentityHelper.IsPackagedMsix())
+        {
+            VelopackApp.Build()
+                .OnBeforeUninstallFastCallback(_ => CleanupManagedDataOnUninstall())
+                .Run();
+        }
+#endif
 
         // 3. Launch WPF Application
         var app = new App();
@@ -27,6 +36,7 @@ public static class Program
         return app.Run();
     }
 
+#if !STORE_MSIX
     private static void CleanupManagedDataOnUninstall()
     {
         // Clean managed external tools & logs in %LocalAppData%\YTDownloadToolData on uninstall.
@@ -44,4 +54,5 @@ public static class Program
             // Best-effort cleanup during uninstall; never block uninstaller.
         }
     }
+#endif
 }

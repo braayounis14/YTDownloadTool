@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using YTDownloadTool.Core.Paths;
+using YTDownloadTool.Core.Platform;
 using YTDownloadTool.Core.Process;
 using YTDownloadTool.Core.Settings;
 using YTDownloadTool.Core.Tools;
@@ -158,7 +159,7 @@ public sealed class ToolManagerTests : IDisposable
         var settingsStore = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settingsStore.LoadAsync();
         using var httpClient = new HttpClient(httpHandler);
-        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance);
+        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance, DistributionProfile.ForTesting(isStoreManaged: false));
 
         // 1. EnsureToolsReady seeds all 3 from BaselineTools without network calls
         var toolchain = await manager.EnsureToolsReadyAsync();
@@ -234,7 +235,7 @@ public sealed class ToolManagerTests : IDisposable
         var settingsStore = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settingsStore.LoadAsync();
         using var httpClient = new HttpClient(httpHandler);
-        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance);
+        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance, DistributionProfile.ForTesting(isStoreManaged: false));
 
         await manager.EnsureToolsReadyAsync();
 
@@ -294,7 +295,7 @@ public sealed class ToolManagerTests : IDisposable
         var settingsStore = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settingsStore.LoadAsync();
         using var httpClient = new HttpClient(httpHandler);
-        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance);
+        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance, DistributionProfile.ForTesting(isStoreManaged: false));
 
         var initial = await manager.EnsureToolsReadyAsync();
         Assert.Equal("2026.10.01", initial.YtDlpVersion);
@@ -331,7 +332,7 @@ public sealed class ToolManagerTests : IDisposable
         var settingsStore = new SettingsStore(_paths, NullLogger<SettingsStore>.Instance);
         await settingsStore.LoadAsync();
         using var httpClient = new HttpClient(new StubHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance);
+        var manager = new ToolManager(_paths, settingsStore, fakeProcessRunner, httpClient, NullLogger<ToolManager>.Instance, DistributionProfile.ForTesting(isStoreManaged: false));
 
         var initial = await manager.EnsureToolsReadyAsync();
         File.Delete(initial.YtDlpPath); // Simulate antivirus quarantine / accidental deletion

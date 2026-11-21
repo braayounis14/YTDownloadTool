@@ -30,7 +30,7 @@ public partial class MainWindow : Window
             var answer = MessageBox.Show(
                 "One or more downloads or livestream recordings are still active.\n\n" +
                 "Click Yes to stop them safely (active livestream recordings will be finalized and saved) and exit.\n" +
-                "Click No to keep YTDownloadTool running.",
+                "Click No to keep Tidejar running.",
                 "Active Downloads in Progress",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning,
@@ -44,7 +44,7 @@ public partial class MainWindow : Window
 
             e.Cancel = true;
             IsEnabled = false;
-            Title = "YTDownloadTool — Finalizing active operations...";
+            Title = "Tidejar — Finalizing active operations...";
 
             try
             {
