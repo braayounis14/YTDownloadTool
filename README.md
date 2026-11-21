@@ -11,7 +11,7 @@ A modern, privacy-first Windows desktop application (.NET 10 WPF) for saving onl
 
 ---
 
-## Key Features (v1.1.0)
+## Key Features (v1.1.1)
 
 - **Real Format Inspection & Video/Audio Saving:** Probes available video resolutions (up to 4K/HDR and high frame rates), codecs, and audio-only streams directly before download, with container selection (`MP4`, `MKV`, `WEBM`, `M4A`, `MP3`, `OPUS`).
 - **Livestream Recording (Modes A, B & C):**

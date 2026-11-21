@@ -217,6 +217,6 @@ public sealed class AppUpdateService : IAppUpdateService
         if (!string.IsNullOrWhiteSpace(infoVer))
             return infoVer.Split('+')[0];
 
-        return asm.GetName().Version?.ToString(3) ?? "1.1.0";
+        return asm.GetName().Version?.ToString(3) ?? "1.1.1";
     }
 }

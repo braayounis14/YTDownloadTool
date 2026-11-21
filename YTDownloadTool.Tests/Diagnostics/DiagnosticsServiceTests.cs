@@ -125,7 +125,7 @@ public sealed class DiagnosticsServiceTests : IDisposable
         var svc = new DiagnosticsService(_paths, db, jobRepo, diagRepo, settings, new StubToolManager(), ledger, NullLogger<DiagnosticsService>.Instance);
 
         var zipPath = Path.Combine(_rootDir, "bundle.zip");
-        var export = await svc.ExportDiagnosticBundleAsync(zipPath, "1.1.0");
+        var export = await svc.ExportDiagnosticBundleAsync(zipPath, "1.1.1");
 
         Assert.True(File.Exists(export.ZipFilePath));
         Assert.Equal(1, export.IncludedLogFiles);
@@ -176,7 +176,7 @@ public sealed class DiagnosticsServiceTests : IDisposable
         using (var sysReader = new StreamReader(archive.GetEntry("system-info.json")!.Open()))
         {
             var sysDoc = JsonDocument.Parse(await sysReader.ReadToEndAsync());
-            Assert.Equal("1.1.0", sysDoc.RootElement.GetProperty("appVersion").GetString());
+            Assert.Equal("1.1.1", sysDoc.RootElement.GetProperty("appVersion").GetString());
             Assert.Equal(1, sysDoc.RootElement.GetProperty("database").GetProperty("currentSchemaVersion").GetInt32());
         }
     }

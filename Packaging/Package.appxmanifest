@@ -8,7 +8,7 @@
   <Identity
     Name="__IDENTITY_NAME__"
     Publisher="__PUBLISHER__"
-    Version="__VERSION__"
+    Version="1.1.1.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

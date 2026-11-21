@@ -381,7 +381,7 @@ public sealed class DiagnosticsService : IDiagnosticsService
 
         return new
         {
-            appVersion = string.IsNullOrWhiteSpace(appVersion) ? "1.1.0" : appVersion,
+            appVersion = string.IsNullOrWhiteSpace(appVersion) ? "1.1.1" : appVersion,
             exportedAtUtc = DateTimeOffset.UtcNow,
             osDescription = RuntimeInformation.OSDescription,
             osVersion = Environment.OSVersion.VersionString,

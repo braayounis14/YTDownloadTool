@@ -159,10 +159,16 @@ try {
     Copy-Item -Path (Join-Path $assetsSourceDir "*") -Destination $stageAssetsDir -Recurse -Force
 
     # Stamp parameterized Package.appxmanifest -> AppxManifest.xml
+    $escapedStoreVersion = [System.Security.SecurityElement]::Escape($storeVersion)
     $manifestXml = Get-Content -Path $manifestTemplatePath -Raw -Encoding UTF8
     $manifestXml = $manifestXml.Replace("__IDENTITY_NAME__", [System.Security.SecurityElement]::Escape($IdentityName))
     $manifestXml = $manifestXml.Replace("__PUBLISHER__", [System.Security.SecurityElement]::Escape($Publisher))
-    $manifestXml = $manifestXml.Replace("__VERSION__", [System.Security.SecurityElement]::Escape($storeVersion))
+    if ($manifestXml.Contains("__VERSION__")) {
+        $manifestXml = $manifestXml.Replace("__VERSION__", $escapedStoreVersion)
+    }
+    else {
+        $manifestXml = [regex]::Replace($manifestXml, '(<Identity\b[^>]*\bVersion=")[^"]+(")', "`${1}$escapedStoreVersion`${2}", 1)
+    }
     $manifestXml = $manifestXml.Replace("__DISPLAY_NAME__", [System.Security.SecurityElement]::Escape($DisplayName))
     $manifestXml = $manifestXml.Replace("__PUBLISHER_DISPLAY_NAME__", [System.Security.SecurityElement]::Escape($PublisherDisplayName))
     Set-Content -Path (Join-Path $stageDir "AppxManifest.xml") -Value $manifestXml -Encoding UTF8
