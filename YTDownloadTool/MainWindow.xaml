@@ -37,12 +37,25 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Multimedia Engine Status Pill -->
-                    <Border Background="#16000000" BorderBrush="#1EFFFFFF" BorderThickness="1" CornerRadius="12" Padding="12,10">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse Width="9" Height="9" Fill="{Binding EngineStatusColor}" VerticalAlignment="Center" Margin="0,0,10,0" />
-                            <TextBlock Text="{Binding EngineStatusText}" Foreground="{StaticResource SubtleTextBrush}"
-                                       FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" MaxWidth="165" />
+                    <!-- Multimedia Engine Status Pill (2-line stacked layout so version never clips) -->
+                    <Border Background="#16000000" BorderBrush="#1EFFFFFF" BorderThickness="1" CornerRadius="12" Padding="12,10"
+                            ToolTip="{Binding EngineStatusTooltip}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse Grid.Column="0" Width="9" Height="9" Fill="{Binding EngineStatusColor}"
+                                         VerticalAlignment="Center" Margin="0,0,9,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding EngineStatusText}" Foreground="#E2E6F3"
+                                           FontSize="11.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="{Binding EngineVersionSubtext}"
+                                       Visibility="{Binding EngineVersionSubtext, Converter={StaticResource StrToVis}}"
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="10.5"
+                                       TextTrimming="CharacterEllipsis" Margin="18,3,0,0" />
                         </StackPanel>
                     </Border>
                 </StackPanel>

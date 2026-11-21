@@ -53,49 +53,53 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Border CornerRadius="14" Background="#14FFFFFF" BorderBrush="#20FFFFFF" BorderThickness="1" Padding="14" Margin="0,0,0,10">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="116" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <!-- Row 0: Thumbnail + Full-Width Title & Metadata -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="116" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
 
-                                <Border Grid.Column="0" Width="104" Height="60" CornerRadius="8" Background="#10101D" ClipToBounds="True" VerticalAlignment="Center">
-                                    <Image Source="{Binding ThumbnailUrl}" Stretch="UniformToFill" />
-                                </Border>
+                                    <Border Grid.Column="0" Width="104" Height="60" CornerRadius="8" Background="#10101D" ClipToBounds="True" VerticalAlignment="Top">
+                                        <Image Source="{Binding ThumbnailUrl}" Stretch="UniformToFill" />
+                                    </Border>
 
-                                <StackPanel Grid.Column="1" Margin="14,0,12,0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                    <WrapPanel Orientation="Horizontal" Margin="0,5,0,0">
-                                        <Border Background="{Binding IntegrityBadgeColor}" CornerRadius="5" Padding="6,2" Margin="0,0,10,2"
-                                                ToolTip="{Binding IntegrityTooltip}">
-                                            <TextBlock Text="{Binding IntegrityBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" />
-                                        </Border>
-                                        <TextBlock Text="{Binding Channel}" Foreground="{StaticResource AccentBlue}" FontSize="12" Margin="0,0,10,2" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding BadgeText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding Container}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding MediaSpecsSummary}"
-                                                   Visibility="{Binding MediaSpecsSummary, Converter={StaticResource StrToVis}}"
-                                                   Foreground="#C4CBE0" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding FileSizeText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding CompletedAtText}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,0,0,2" VerticalAlignment="Center" />
-                                    </WrapPanel>
-                                </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}" Foreground="White" FontSize="15" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}" />
+                                        <WrapPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                            <Border Background="{Binding IntegrityBadgeColor}" CornerRadius="5" Padding="6,2" Margin="0,0,10,2"
+                                                    ToolTip="{Binding IntegrityTooltip}">
+                                                <TextBlock Text="{Binding IntegrityBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Channel}" Foreground="{StaticResource AccentBlue}" FontSize="12" Margin="0,0,10,2" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding BadgeText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Container}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding MediaSpecsSummary}"
+                                                       Visibility="{Binding MediaSpecsSummary, Converter={StaticResource StrToVis}}"
+                                                       Foreground="#C4CBE0" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding FileSizeText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" Margin="0,0,10,2" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding CompletedAtText}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,0,0,2" VerticalAlignment="Center" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Grid>
 
-                                <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                <!-- Row 1: Full-Width Action Buttons Row (never competes with title or metadata) -->
+                                <WrapPanel Orientation="Horizontal" Margin="130,8,0,0">
                                     <Button Content="Play" Command="{Binding PlayCommand}" IsEnabled="{Binding FileExists}"
-                                            Style="{StaticResource PrimaryButton}" Padding="12,6" FontSize="12" Margin="0,2,6,2" />
+                                            Style="{StaticResource PrimaryButton}" Padding="12,5" FontSize="12" Margin="0,2,6,2" />
                                     <Button Content="{Binding VerifyButtonText}" Command="{Binding VerifyOrRepairCommand}" IsEnabled="{Binding CanVerify}"
-                                            Style="{StaticResource SecondaryButton}" Padding="10,6" FontSize="11" Margin="0,2,6,2"
+                                            Style="{StaticResource SecondaryButton}" Padding="10,5" FontSize="11" Margin="0,2,6,2"
                                             ToolTip="Verify file with ffprobe and losslessly repair container metadata if needed" />
                                     <Button Content="Reveal" Command="{Binding ShowInExplorerCommand}"
-                                            Style="{StaticResource SecondaryButton}" Padding="10,6" FontSize="11" Margin="0,2,6,2" />
+                                            Style="{StaticResource SecondaryButton}" Padding="10,5" FontSize="11" Margin="0,2,6,2" />
                                     <Button Content="Copy URL" Command="{Binding CopyUrlCommand}"
-                                            Style="{StaticResource SecondaryButton}" Padding="10,6" FontSize="11" Margin="0,2,6,2" />
+                                            Style="{StaticResource SecondaryButton}" Padding="10,5" FontSize="11" Margin="0,2,6,2" />
                                     <Button Content="Remove" Command="{Binding RemoveFromHistoryCommand}"
-                                            Style="{StaticResource DangerButton}" Padding="10,6" FontSize="11" Margin="0,2,0,2" />
+                                            Style="{StaticResource DangerButton}" Padding="10,5" FontSize="11" Margin="0,2,0,2" />
                                 </WrapPanel>
-                            </Grid>
+                            </StackPanel>
                         </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

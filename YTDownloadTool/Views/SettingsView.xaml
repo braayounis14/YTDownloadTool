@@ -15,11 +15,11 @@
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Default Download Folder" Foreground="White" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <TextBlock Text="Default Download Folder" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
                         <TextBox Grid.Column="1" Text="{Binding DownloadDirectory}" Style="{StaticResource DarkTextBox}"
                                  ToolTip="{Binding DownloadDirectory}" />
                         <Button Grid.Column="2" Content="Browse..." Command="{Binding BrowseDefaultFolderCommand}"
@@ -28,10 +28,10 @@
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="18" />
-                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Preferred Quality" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
@@ -42,10 +42,10 @@
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="18" />
-                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Max Concurrent Jobs" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
@@ -57,38 +57,41 @@
                     <!-- Per-Download Speed Limit Row (yt-dlp limit-rate) -->
                     <Grid Margin="0,0,0,14">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="175" />
-                            <ColumnDefinition Width="170" />
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Per-Download Speed Limit" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding SpeedLimitPresets}" SelectedItem="{Binding SelectedSpeedLimitPreset}"
-                                  DisplayMemberPath="Label" Style="{StaticResource DarkComboBox}" />
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="10,0,0,0"
-                                    Visibility="{Binding IsCustomSpeedLimitSelected, Converter={StaticResource BoolToVis}}">
-                            <TextBox Text="{Binding CustomSpeedLimitKbpsText, UpdateSourceTrigger=PropertyChanged}"
-                                     Style="{StaticResource DarkTextBox}" Width="105" Padding="10,6" FontSize="13" />
-                            <TextBlock Text="KB/s" Foreground="{StaticResource SubtleTextBrush}" FontSize="12"
-                                       VerticalAlignment="Center" Margin="6,0,0,0" />
+                        <TextBlock Text="Per-Download Speed Limit" Foreground="White" VerticalAlignment="Top" Margin="0,8,10,0" />
+                        <StackPanel Grid.Column="1">
+                            <WrapPanel Orientation="Horizontal">
+                                <ComboBox ItemsSource="{Binding SpeedLimitPresets}" SelectedItem="{Binding SelectedSpeedLimitPreset}"
+                                          DisplayMemberPath="Label" Style="{StaticResource DarkComboBox}" Width="175" Margin="0,0,10,4" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4"
+                                            Visibility="{Binding IsCustomSpeedLimitSelected, Converter={StaticResource BoolToVis}}">
+                                    <TextBox Text="{Binding CustomSpeedLimitKbpsText, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource DarkTextBox}" Width="105" Padding="10,6" FontSize="13" />
+                                    <TextBlock Text="KB/s" Foreground="{StaticResource SubtleTextBrush}" FontSize="12"
+                                               VerticalAlignment="Center" Margin="6,0,0,0" />
+                                </StackPanel>
+                            </WrapPanel>
+                            <TextBlock Text="Applies individually to each active download (yt-dlp --limit-rate)."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
                         </StackPanel>
-                        <TextBlock Grid.Column="3" Text="Applies individually to each active download (yt-dlp --limit-rate)."
-                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap"
-                                   VerticalAlignment="Center" Margin="14,0,0,0" />
                     </Grid>
 
                     <!-- Self-Update Options (Non-Store Desktop Edition Only; Hidden in Microsoft Store MSIX Builds) -->
                     <Grid Margin="0,0,0,14" Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="175" />
-                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="165" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="yt-dlp Release Channel" Foreground="White" VerticalAlignment="Center" Margin="0,0,10,0" />
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding YtDlpChannelOptions}" SelectedItem="{Binding YtDlpChannel}" Style="{StaticResource DarkComboBox}" />
-                        <WrapPanel Grid.Column="2" VerticalAlignment="Center" Margin="14,0,0,0">
-                            <CheckBox Content="Auto-update multimedia engine" IsChecked="{Binding AutoUpdateTools}" Foreground="White" Margin="0,4,18,4" />
-                            <CheckBox Content="Auto-check app updates" IsChecked="{Binding AutoCheckAppUpdates}" Foreground="White" Margin="0,4,0,4" />
+                        <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                            <ComboBox ItemsSource="{Binding YtDlpChannelOptions}" SelectedItem="{Binding YtDlpChannel}"
+                                      Style="{StaticResource DarkComboBox}" Width="145" Margin="0,2,16,2" />
+                            <CheckBox Content="Auto-update multimedia engine" IsChecked="{Binding AutoUpdateTools}"
+                                      Foreground="White" VerticalAlignment="Center" Margin="0,6,18,4" />
+                            <CheckBox Content="Auto-check app updates" IsChecked="{Binding AutoCheckAppUpdates}"
+                                      Foreground="White" VerticalAlignment="Center" Margin="0,6,0,4" />
                         </WrapPanel>
                     </Grid>
 
@@ -115,7 +118,7 @@
                         </StackPanel>
                         <Button Grid.Column="1" Content="Check Engine Updates" Command="{Binding CheckEngineUpdatesCommand}"
                                 Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}"
-                                Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" />
+                                Style="{StaticResource SecondaryButton}" VerticalAlignment="Top" />
                     </Grid>
 
                     <TextBlock Text="{Binding EngineActionFeedback}"
@@ -126,40 +129,33 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="12" Padding="14" Margin="0,0,0,10">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <WrapPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding DisplayName}" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,10,2" />
+                                            <Border Background="{Binding StateBadgeColor}" CornerRadius="5" Padding="7,2" VerticalAlignment="Center" Margin="0,0,0,2">
+                                                <TextBlock Text="{Binding State}" Foreground="White" FontSize="10" FontWeight="Bold" />
+                                            </Border>
+                                        </WrapPanel>
+                                        <TextBlock Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
+                                            <Run Text="Installed: " />
+                                            <Run Text="{Binding InstalledVersion}" Foreground="White" />
+                                            <Run Text="  •  " />
+                                            <Run Text="{Binding StatusMessage}" />
+                                        </TextBlock>
+                                        <ProgressBar Style="{StaticResource ModernProgressBar}" Value="{Binding DownloadProgress}" Height="5" Margin="0,8,0,0"
+                                                     Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
 
-                                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding DisplayName}" Foreground="White" FontSize="15" FontWeight="SemiBold" Margin="0,0,10,0" />
-                                                <Border Background="{Binding StateBadgeColor}" CornerRadius="5" Padding="7,2">
-                                                    <TextBlock Text="{Binding State}" Foreground="White" FontSize="10" FontWeight="Bold" />
-                                                </Border>
-                                            </StackPanel>
-                                            <TextBlock Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
-                                                <Run Text="Installed: " />
-                                                <Run Text="{Binding InstalledVersion}" Foreground="White" />
-                                                <Run Text="  •  " />
-                                                <Run Text="{Binding StatusMessage}" />
-                                            </TextBlock>
-                                            <ProgressBar Style="{StaticResource ModernProgressBar}" Value="{Binding DownloadProgress}" Height="5" Margin="0,8,0,0"
-                                                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
-                                        </StackPanel>
-
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
-                                                    Visibility="{Binding AllowSelfUpdateControls, Converter={StaticResource BoolToVis}}">
+                                        <WrapPanel Orientation="Horizontal" Margin="0,10,0,0"
+                                                   Visibility="{Binding AllowSelfUpdateControls, Converter={StaticResource BoolToVis}}">
                                             <Button Content="Update" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource PrimaryButton}" Padding="12,6" FontSize="12" Margin="0,0,6,0" />
+                                                    Style="{StaticResource PrimaryButton}" Padding="12,6" FontSize="12" Margin="0,0,8,4" />
                                             <Button Content="Rollback" Command="{Binding RollbackCommand}"
                                                     Visibility="{Binding ShowRollbackButton, Converter={StaticResource BoolToVis}}"
-                                                    Style="{StaticResource SecondaryButton}" Margin="0,0,6,0" />
+                                                    Style="{StaticResource SecondaryButton}" Padding="12,6" Margin="0,0,8,4" />
                                             <Button Content="Repair" Command="{Binding RepairCommand}"
-                                                    Style="{StaticResource SecondaryButton}" />
-                                        </StackPanel>
-                                    </Grid>
+                                                    Style="{StaticResource SecondaryButton}" Padding="12,6" Margin="0,0,0,4" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -170,34 +166,28 @@
             <!-- Diagnostics & Support Card -->
             <Border Style="{StaticResource GlassCard}" Margin="0,0,0,16">
                 <StackPanel>
-                    <Grid Margin="0,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
-                            <TextBlock Text="DIAGNOSTICS &amp; SUPPORT" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" />
-                            <TextBlock Text="Inspect local SQLite storage health, reclaim unused temporary folders safely, or export a redacted diagnostic bundle."
-                                       Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button Content="Refresh" Command="{Binding RefreshDiagnosticsCommand}"
-                                    Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
-                            <Button Content="Export Diagnostic Bundle (.zip)" Command="{Binding ExportDiagnosticBundleCommand}"
-                                    IsEnabled="{Binding IsDiagnosticsBusy, Converter={StaticResource InvBool}}"
-                                    Style="{StaticResource PrimaryButton}" Padding="14,8" FontSize="12" />
-                        </StackPanel>
-                    </Grid>
+                    <TextBlock Text="DIAGNOSTICS &amp; SUPPORT" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" />
+                    <TextBlock Text="Inspect local SQLite storage health, reclaim unused temporary folders safely, or export a redacted diagnostic bundle."
+                               Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,12" />
+
+                    <!-- Full-width WrapPanel so action buttons never squeeze the header description -->
+                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <Button Content="Export Diagnostic Bundle (.zip)" Command="{Binding ExportDiagnosticBundleCommand}"
+                                IsEnabled="{Binding IsDiagnosticsBusy, Converter={StaticResource InvBool}}"
+                                Style="{StaticResource PrimaryButton}" Padding="14,8" FontSize="12" Margin="0,0,8,6" />
+                        <Button Content="Refresh" Command="{Binding RefreshDiagnosticsCommand}"
+                                Style="{StaticResource SecondaryButton}" Margin="0,0,0,6" />
+                    </WrapPanel>
 
                     <!-- Database Health Row -->
                     <Border Background="#18000000" BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,10">
                         <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Database Health" Foreground="White" FontSize="13" FontWeight="SemiBold" Margin="0,0,10,0" />
-                                <Border Background="{Binding DatabaseHealthBadgeColor}" CornerRadius="5" Padding="7,2">
+                            <WrapPanel Orientation="Horizontal">
+                                <TextBlock Text="Database Health" Foreground="White" FontSize="13" FontWeight="SemiBold" Margin="0,0,10,2" />
+                                <Border Background="{Binding DatabaseHealthBadgeColor}" CornerRadius="5" Padding="7,2" VerticalAlignment="Center" Margin="0,0,0,2">
                                     <TextBlock Text="{Binding DatabaseHealthBadgeText}" Foreground="White" FontSize="10" FontWeight="Bold" />
                                 </Border>
-                            </StackPanel>
+                            </WrapPanel>
                             <TextBlock Text="{Binding DatabaseSummaryText}" Foreground="{StaticResource SubtleTextBrush}"
                                        FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
                             <TextBlock Text="{Binding RecentFailuresSummaryText}" Foreground="{StaticResource MutedTextBrush}"
@@ -243,46 +233,48 @@
                 <StackPanel>
                     <TextBlock Text="ABOUT, UPDATES, PRIVACY &amp; LEGAL" Foreground="{StaticResource AccentBlue}" FontSize="11" FontWeight="Bold" Margin="0,0,0,12" />
 
-                    <Grid Margin="0,0,0,12">
+                    <!-- Header Row: Column 0 (*) wraps title + edition badge + status; Column 1 (Auto) holds only Check App Updates -->
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Top">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding AppVersionText}" Foreground="White" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,10,0" />
-                                <Border Background="#2600D2FF" BorderBrush="#5500D2FF" BorderThickness="1" CornerRadius="5" Padding="7,2" VerticalAlignment="Center">
+                            <WrapPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding AppVersionText}" Foreground="White" FontSize="15" FontWeight="SemiBold"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,4" />
+                                <Border Background="#2600D2FF" BorderBrush="#5500D2FF" BorderThickness="1" CornerRadius="5"
+                                        Padding="7,2" VerticalAlignment="Center" Margin="0,0,0,4">
                                     <TextBlock Text="{Binding EditionBadgeText}" Foreground="#9EEBFF" FontSize="9" FontWeight="Bold" />
                                 </Border>
-                            </StackPanel>
+                            </WrapPanel>
                             <TextBlock Text="{Binding AppUpdateStatusText}" Foreground="{StaticResource SubtleTextBrush}" FontSize="12"
-                                       TextWrapping="Wrap" Margin="0,5,0,0" />
+                                       TextWrapping="Wrap" Margin="0,4,0,0" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
-                                        Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}"
-                                        Margin="0,0,0,8">
-                                <Button Content="Restart &amp; Update" Command="{Binding ApplyAppUpdateNowCommand}"
-                                        Visibility="{Binding IsAppUpdateReadyToRestart, Converter={StaticResource BoolToVis}}"
-                                        Style="{StaticResource PrimaryButton}" Padding="12,7" FontSize="12" Margin="0,0,8,0" />
-                                <Button Content="Check App Updates" Command="{Binding CheckAppUpdatesCommand}"
-                                        Style="{StaticResource SecondaryButton}" />
-                            </StackPanel>
-                            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="Open Logs Folder" Command="{Binding OpenLogsFolderCommand}"
-                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
-                                <Button Content="Privacy Policy" Command="{Binding OpenPrivacyPolicyOnlineCommand}"
-                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6"
-                                        ToolTip="{Binding PrivacyPolicyUrl}" />
-                                <Button Content="View Privacy (Offline)" Command="{Binding TogglePrivacyPolicyOfflineCommand}"
-                                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
-                                <Button Content="Open-Source Licenses" Command="{Binding ToggleNoticesCommand}"
-                                        Style="{StaticResource SecondaryButton}" Margin="0,0,0,6" />
-                            </WrapPanel>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right"
+                                    Visibility="{Binding IsSelfManagedDesktop, Converter={StaticResource BoolToVis}}">
+                            <Button Content="Check App Updates" Command="{Binding CheckAppUpdatesCommand}"
+                                    Style="{StaticResource SecondaryButton}" />
+                            <Button Content="Restart &amp; Update" Command="{Binding ApplyAppUpdateNowCommand}"
+                                    Visibility="{Binding IsAppUpdateReadyToRestart, Converter={StaticResource BoolToVis}}"
+                                    Style="{StaticResource PrimaryButton}" Padding="12,7" FontSize="12" Margin="0,8,0,0" />
                         </StackPanel>
                     </Grid>
+
+                    <!-- Full-Width Secondary Action Buttons Row (never competes with title or status text) -->
+                    <WrapPanel Orientation="Horizontal" Margin="0,12,0,10">
+                        <Button Content="Open Logs Folder" Command="{Binding OpenLogsFolderCommand}"
+                                Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
+                        <Button Content="Privacy Policy" Command="{Binding OpenPrivacyPolicyOnlineCommand}"
+                                Style="{StaticResource SecondaryButton}" Margin="0,0,8,6"
+                                ToolTip="{Binding PrivacyPolicyUrl}" />
+                        <Button Content="View Privacy (Offline)" Command="{Binding TogglePrivacyPolicyOfflineCommand}"
+                                Style="{StaticResource SecondaryButton}" Margin="0,0,8,6" />
+                        <Button Content="Open-Source Licenses" Command="{Binding ToggleNoticesCommand}"
+                                Style="{StaticResource SecondaryButton}" Margin="0,0,0,6" />
+                    </WrapPanel>
 
                     <!-- Legal & Personal Use Notice (Policy 10.1) -->
                     <Border Background="#18000000" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,8">

@@ -78,10 +78,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private AppNavigationTab _selectedTab = AppNavigationTab.Downloads;
     [ObservableProperty] private string _engineStatusText = "Checking engine...";
+    [ObservableProperty] private string _engineVersionSubtext = string.Empty;
     [ObservableProperty] private string _engineStatusColor = "#D29922";
     [ObservableProperty] private bool _isAppUpdateReady;
     [ObservableProperty] private string _appUpdateBannerText = string.Empty;
     [ObservableProperty] private string? _databaseRecoveryNotice;
+
+    public string EngineStatusTooltip => string.IsNullOrWhiteSpace(EngineVersionSubtext)
+        ? EngineStatusText
+        : $"{EngineStatusText} • {EngineVersionSubtext}";
+
+    partial void OnEngineStatusTextChanged(string value) => OnPropertyChanged(nameof(EngineStatusTooltip));
+    partial void OnEngineVersionSubtextChanged(string value) => OnPropertyChanged(nameof(EngineStatusTooltip));
 
     public bool IsDownloadsSelected => SelectedTab == AppNavigationTab.Downloads;
     public bool IsLibrarySelected => SelectedTab == AppNavigationTab.Library;
@@ -115,21 +123,29 @@ public sealed partial class MainViewModel : ObservableObject
         await Library.RefreshAsync();
 
         // 3. Ensure multimedia toolchain (yt-dlp, FFmpeg, Deno) is healthy / seeded / ready
-        var statusProgress = new Progress<string>(msg => EngineStatusText = msg);
+        var statusProgress = new Progress<string>(msg =>
+        {
+            EngineStatusText = msg;
+            EngineVersionSubtext = string.Empty;
+        });
         try
         {
             var toolchain = await _toolManager.EnsureToolsReadyAsync(statusProgress);
             EngineStatusText = _distributionProfile.IsStoreManaged
-                ? $"Engine ready (Bundled) • yt-dlp {toolchain.YtDlpVersion}"
-                : $"Engine ready • yt-dlp {toolchain.YtDlpVersion}";
+                ? "Engine ready (Bundled)"
+                : "Engine ready";
+            EngineVersionSubtext = $"yt-dlp {toolchain.YtDlpVersion}";
             EngineStatusColor = "#2EA043";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Initial multimedia engine readiness check failed.");
             EngineStatusText = _distributionProfile.IsStoreManaged
-                ? "Bundled engine error (reinstall app)"
-                : "Engine needs repair (open Settings)";
+                ? "Bundled engine error"
+                : "Engine needs repair";
+            EngineVersionSubtext = _distributionProfile.IsStoreManaged
+                ? "Reinstall app to repair"
+                : "Open Settings to repair";
             EngineStatusColor = "#DA3633";
         }
 
@@ -157,10 +173,12 @@ public sealed partial class MainViewModel : ObservableObject
             var ytDlpCheck = checks.FirstOrDefault(c => c.Kind == ToolKind.YtDlp);
             if (ytDlpCheck?.UpdateAvailable == true && _orchestrator.ActiveJobCount == 0)
             {
-                EngineStatusText = $"Updating yt-dlp → {ytDlpCheck.LatestVersion}...";
+                EngineStatusText = "Updating yt-dlp...";
+                EngineVersionSubtext = $"→ {ytDlpCheck.LatestVersion}";
                 EngineStatusColor = "#00A8E8";
                 var updated = await _toolManager.UpdateToolAsync(ToolKind.YtDlp);
-                EngineStatusText = $"Engine ready • yt-dlp {updated.InstalledVersion}";
+                EngineStatusText = "Engine ready";
+                EngineVersionSubtext = $"yt-dlp {updated.InstalledVersion}";
                 EngineStatusColor = "#2EA043";
                 await Settings.RefreshToolStatusesAsync();
             }
